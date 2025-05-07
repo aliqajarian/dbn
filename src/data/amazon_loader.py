@@ -43,20 +43,21 @@ class AmazonBooksLoader:
                     item = json.loads(line.strip())
                     # Extract relevant fields
                     processed_item = {
-                        'asin': item.get('asin', ''),
+                        'asin': item.get('parent_asin', ''),
                         'title': item.get('title', ''),
-                        'description': item.get('description', ''),
+                        'subtitle': item.get('subtitle', ''),
+                        'author': item.get('author', {}).get('name', '') if item.get('author') else '',
+                        'description': ' '.join(item.get('description', [])),
                         'categories': item.get('categories', []),
-                        'price': item.get('price', 0.0),
-                        'brand': item.get('brand', ''),
+                        'price': float(item.get('price', 0.0)),
+                        'store': item.get('store', ''),
                         'main_category': item.get('main_category', ''),
-                        'image_url': item.get('imageURLHighRes', [None])[0] if item.get('imageURLHighRes') else None,
+                        'image_url': item.get('images', [None])[0] if item.get('images') else None,
                         'features': item.get('features', []),
-                        'also_buy': item.get('also_buy', []),
-                        'also_view': item.get('also_view', []),
-                        'rank': item.get('rank', {}),
-                        'rating': item.get('rating', 0.0),
-                        'review_count': item.get('review_count', 0)
+                        'bought_together': item.get('bought_together', []),
+                        'average_rating': float(item.get('average_rating', 0.0)),
+                        'rating_count': int(item.get('rating_number', 0)),
+                        'details': item.get('details', {})
                     }
                     data.append(processed_item)
                 except json.JSONDecodeError as e:
@@ -93,17 +94,22 @@ class AmazonBooksLoader:
                         break
                     try:
                         review = json.loads(line)
-                        reviews.append({
-                            'asin': review.get('asin'),
-                            'reviewerID': review.get('reviewerID'),
-                            'reviewerName': review.get('reviewerName'),
-                            'reviewText': review.get('reviewText'),
-                            'overall': review.get('overall'),
-                            'summary': review.get('summary'),
-                            'unixReviewTime': review.get('unixReviewTime'),
-                            'reviewTime': review.get('reviewTime'),
-                            'helpful': review.get('helpful', [0, 0])
-                        })
+                        # Extract relevant fields
+                        processed_review = {
+                            'asin': review.get('asin', ''),
+                            'reviewerID': review.get('reviewerID', ''),
+                            'reviewerName': review.get('reviewerName', ''),
+                            'reviewText': review.get('reviewText', ''),
+                            'summary': review.get('summary', ''),
+                            'overall': float(review.get('overall', 0.0)),
+                            'verified': review.get('verified', False),
+                            'reviewTime': review.get('reviewTime', ''),
+                            'unixReviewTime': int(review.get('unixReviewTime', 0)),
+                            'helpful': review.get('helpful', [0, 0]),
+                            'style': review.get('style', {}),
+                            'vote': review.get('vote', '')
+                        }
+                        reviews.append(processed_review)
                     except json.JSONDecodeError:
                         self.logger.warning(f"Failed to parse review at line {i}")
                         continue
