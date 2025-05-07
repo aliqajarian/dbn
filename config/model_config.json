@@ -1,0 +1,20 @@
+{
+    "model": {
+        "layer_sizes": [1000, 500, 200, 100],
+        "sequence_length": 10,
+        "learning_rate": 0.001,
+        "batch_size": 32,
+        "epochs": 50,
+        "threshold": 0.1
+    },
+    "gan": {
+        "noise_dim": 100,
+        "learning_rate": 0.0002,
+        "epochs": 50
+    },
+    "data": {
+        "max_features": 1000,
+        "min_df": 2,
+        "sequence_length": 10
+    }
+} 

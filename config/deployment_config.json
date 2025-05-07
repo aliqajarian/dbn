@@ -1,0 +1,14 @@
+{
+    "api": {
+        "host": "0.0.0.0",
+        "port": 8000
+    },
+    "model": {
+        "path": "models/anomaly_detector.pth",
+        "onnx_path": "models/anomaly_detector.onnx"
+    },
+    "docker": {
+        "image_name": "anomaly-detector",
+        "tag": "latest"
+    }
+} 
