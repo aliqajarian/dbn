@@ -1,0 +1,31 @@
+# Inappropriate words and phrases
+# Format: word|category|severity(1-5)
+# Categories: profanity, hate_speech, adult_content, violence
+
+# Profanity
+fuck|profanity|5
+shit|profanity|4
+damn|profanity|3
+hell|profanity|2
+ass|profanity|3
+
+# Hate Speech
+hate|hate_speech|4
+racist|hate_speech|5
+bigot|hate_speech|4
+discriminate|hate_speech|3
+prejudice|hate_speech|3
+
+# Adult Content
+sex|adult_content|4
+nude|adult_content|4
+porn|adult_content|5
+explicit|adult_content|3
+adult|adult_content|2
+
+# Violence
+kill|violence|4
+murder|violence|5
+attack|violence|3
+abuse|violence|4
+harm|violence|3 

@@ -1,0 +1,63 @@
+# Spam indicators and phrases
+# Format: word/phrase|category|severity(1-5)
+# Categories: promotional, urgency, deception, financial, clickbait
+
+# Promotional Content
+free|promotional|3
+discount|promotional|2
+sale|promotional|2
+offer|promotional|2
+limited time|promotional|3
+exclusive|promotional|2
+buy now|promotional|4
+special offer|promotional|3
+deal|promotional|2
+bonus|promotional|2
+
+# Urgency Indicators
+act now|urgency|4
+hurry|urgency|3
+expires soon|urgency|3
+last chance|urgency|4
+only today|urgency|3
+don't wait|urgency|3
+time sensitive|urgency|3
+urgent|urgency|4
+immediate|urgency|3
+deadline|urgency|3
+
+# Deceptive Practices
+guaranteed|deception|4
+risk free|deception|4
+no risk|deception|3
+100% free|deception|4
+you won|deception|5
+congratulations|deception|3
+selected winner|deception|5
+prize|deception|4
+lottery|deception|5
+inheritance|deception|5
+
+# Financial Lures
+make money|financial|4
+earn fast|financial|4
+get rich|financial|5
+income|financial|3
+investment|financial|3
+profit|financial|3
+cash|financial|3
+money back|financial|3
+no fees|financial|4
+free money|financial|5
+
+# Clickbait Phrases
+you won't believe|clickbait|4
+shocking|clickbait|3
+amazing|clickbait|3
+unbelievable|clickbait|4
+secret|clickbait|3
+revealed|clickbait|3
+miracle|clickbait|4
+life-changing|clickbait|4
+revolutionary|clickbait|3
+discover|clickbait|2

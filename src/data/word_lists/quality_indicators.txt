@@ -1,0 +1,24 @@
+# Quality indicators for reviews
+# Format: word|category|severity(1-5)
+# Categories: positive, negative, neutral
+
+# Positive Indicators
+excellent|positive|5
+amazing|positive|5
+outstanding|positive|5
+perfect|positive|5
+brilliant|positive|4
+
+# Negative Indicators
+terrible|negative|5
+awful|negative|5
+horrible|negative|5
+poor|negative|4
+disappointing|negative|4
+
+# Neutral Indicators
+average|neutral|3
+okay|neutral|2
+decent|neutral|3
+fair|neutral|3
+moderate|neutral|3 

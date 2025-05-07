@@ -1,0 +1,121 @@
+# Format: word/phrase, category, severity (1-5)
+
+# Emotional Expressions
+excited, emotion_positive, 4
+thrilled, emotion_positive, 4
+delighted, emotion_positive, 4
+amazed, emotion_positive, 4
+wonderful, emotion_positive, 4
+disappointed, emotion_negative, 4
+frustrated, emotion_negative, 4
+angry, emotion_negative, 4
+upset, emotion_negative, 4
+heartbroken, emotion_negative, 5
+
+# Intensity Indicators
+absolutely, intensity, 3
+completely, intensity, 3
+totally, intensity, 3
+extremely, intensity, 3
+incredibly, intensity, 3
+barely, intensity, 2
+slightly, intensity, 2
+somewhat, intensity, 2
+moderately, intensity, 2
+partially, intensity, 2
+
+# Sarcasm Indicators
+yeah right, sarcasm, 4
+sure thing, sarcasm, 3
+whatever, sarcasm, 3
+as if, sarcasm, 3
+right, sarcasm, 3
+obviously, sarcasm, 3
+clearly, sarcasm, 3
+of course, sarcasm, 3
+definitely, sarcasm, 3
+absolutely, sarcasm, 3
+
+# Exaggeration Patterns
+best ever, exaggeration, 4
+worst ever, exaggeration, 4
+never again, exaggeration, 4
+always, exaggeration, 3
+never, exaggeration, 3
+every time, exaggeration, 3
+constantly, exaggeration, 3
+forever, exaggeration, 3
+endless, exaggeration, 3
+infinite, exaggeration, 3
+
+# Comparison Patterns
+better than, comparison, 3
+worse than, comparison, 3
+compared to, comparison, 2
+similar to, comparison, 2
+different from, comparison, 2
+unlike, comparison, 2
+versus, comparison, 2
+relative to, comparison, 2
+in contrast to, comparison, 2
+as opposed to, comparison, 2
+
+# Uncertainty Indicators
+maybe, uncertainty, 2
+perhaps, uncertainty, 2
+possibly, uncertainty, 2
+might, uncertainty, 2
+could be, uncertainty, 2
+not sure, uncertainty, 2
+unsure, uncertainty, 2
+doubtful, uncertainty, 2
+questionable, uncertainty, 2
+debatable, uncertainty, 2
+
+# Recommendation Patterns
+highly recommend, recommendation, 4
+strongly suggest, recommendation, 4
+must read, recommendation, 4
+worth it, recommendation, 3
+skip it, recommendation, 3
+avoid, recommendation, 3
+consider, recommendation, 2
+think about, recommendation, 2
+look into, recommendation, 2
+check out, recommendation, 2
+
+# Personal Experience
+my experience, personal, 3
+i found, personal, 3
+i think, personal, 3
+in my opinion, personal, 3
+from my perspective, personal, 3
+i believe, personal, 3
+i feel, personal, 3
+i would, personal, 3
+i have, personal, 3
+i will, personal, 3
+
+# Time-based Expressions
+recently, time, 2
+lately, time, 2
+nowadays, time, 2
+currently, time, 2
+these days, time, 2
+in the past, time, 2
+previously, time, 2
+before, time, 2
+after, time, 2
+since, time, 2
+
+# Value Judgments
+worthless, value, 4
+priceless, value, 4
+valuable, value, 3
+useful, value, 3
+helpful, value, 3
+beneficial, value, 3
+pointless, value, 3
+waste, value, 3
+investment, value, 3
+quality, value, 3 
