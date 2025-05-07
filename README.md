@@ -50,7 +50,7 @@ A deep learning-based anomaly detection system that uses Deep Belief Networks (D
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/anomaly-detection.git
+git clone https://github.com/aliqajarian/anomaly-detection.git
 cd anomaly-detection
 ```
 
@@ -341,4 +341,3 @@ For questions and support, please open an issue in the GitHub repository.
 - [API Documentation](docs/api.md)
 - [Deployment Guide](docs/deployment.md)
 - [Contributing Guidelines](CONTRIBUTING.md)
-- [Performance Optimization Guide](docs/optimization.md)
