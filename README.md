@@ -50,7 +50,7 @@ A deep learning-based anomaly detection system that uses Deep Belief Networks (D
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/aliqajarian/anomaly-detection.git
+git clone https://github.com/aliqajarian/dbn.git
 cd anomaly-detection
 ```
 
@@ -131,7 +131,7 @@ scaler = GradScaler()
 !python -m spacy download en_core_web_sm
 
 # Clone repository
-!git clone https://github.com/aliqajarian/anomaly-detection.git
+!git clone https://github.com/aliqajarian/dbn.git
 %cd anomaly-detection
 
 # Enable GPU
