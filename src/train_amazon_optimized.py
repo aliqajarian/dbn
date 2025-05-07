@@ -189,14 +189,17 @@ class OptimizedAmazonTrainer:
         """Optimized data preparation"""
         logger.info("Preparing data...")
         
-        # Reduce memory usage
-        df['text'] = df['title'].fillna('') + ' ' + df['description'].fillna('')
-        df = df[['text', 'price', 'rating', 'review_count']]
+        # Create a copy of the DataFrame to avoid SettingWithCopyWarning
+        df = df.copy()
         
-        # Convert to float32 to reduce memory
-        df['price'] = df['price'].astype('float32')
-        df['rating'] = df['rating'].astype('float32')
-        df['review_count'] = df['review_count'].astype('float32')
+        # Reduce memory usage
+        df.loc[:, 'text'] = df['title'].fillna('') + ' ' + df['description'].fillna('')
+        df = df[['text', 'price', 'rating', 'review_count']].copy()
+        
+        # Convert to float32 to reduce memory using .loc
+        df.loc[:, 'price'] = df['price'].astype('float32')
+        df.loc[:, 'rating'] = df['rating'].astype('float32')
+        df.loc[:, 'review_count'] = df['review_count'].astype('float32')
         
         return df
     
@@ -204,7 +207,17 @@ class OptimizedAmazonTrainer:
         """Create features efficiently"""
         # Normalize numerical features
         features = df[['price', 'rating', 'review_count']].values
-        features = (features - features.mean(axis=0)) / features.std(axis=0)
+        
+        # Handle potential NaN values and zero standard deviation
+        mean = np.nanmean(features, axis=0)
+        std = np.nanstd(features, axis=0)
+        std[std == 0] = 1  # Prevent division by zero
+        
+        features = (features - mean) / std
+        
+        # Replace any remaining NaN values with 0
+        features = np.nan_to_num(features, 0)
+        
         return features
     
     def train(self, df, epochs=50):
@@ -227,9 +240,10 @@ class OptimizedAmazonTrainer:
             shuffle=True
         )
         
-        # Initialize model
+        # Initialize model with correct input size
+        input_size = features.shape[1]  # This will be 3 for our features
         model = TimeSeriesDBN(
-            layer_sizes=[3, 64, 32, 16],  # Adjusted for our feature size
+            layer_sizes=[input_size, 64, 32, input_size],  # Ensure output size matches input
             sequence_length=self.sequence_length
         ).to(self.device)
         
