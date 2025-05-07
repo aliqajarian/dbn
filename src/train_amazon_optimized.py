@@ -46,8 +46,53 @@ class AmazonBooksLoader:
             logger.error(f"Error downloading data: {e}")
             return None
     
-    def load_data(self, file_path: str = None) -> pd.DataFrame:
-        """Load and process the Amazon Books dataset."""
+    def safe_float_conversion(self, value, default=0.0):
+        """Safely convert a value to float."""
+        try:
+            if value is None:
+                return default
+            return float(value)
+        except (ValueError, TypeError):
+            return default
+    
+    def safe_int_conversion(self, value, default=0):
+        """Safely convert a value to integer."""
+        try:
+            if value is None:
+                return default
+            return int(float(value))
+        except (ValueError, TypeError):
+            return default
+    
+    def process_record(self, record):
+        """Process a single record with error handling."""
+        try:
+            # Extract and validate fields
+            price = self.safe_float_conversion(record.get('price'))
+            rating = self.safe_float_conversion(record.get('rating'))
+            review_count = self.safe_int_conversion(record.get('review_count'))
+            
+            # Validate text fields
+            title = str(record.get('title', '')).strip()
+            description = str(record.get('description', '')).strip()
+            
+            # Only include records with valid data
+            if price >= 0 and 0 <= rating <= 5 and review_count >= 0:
+                return {
+                    'asin': str(record.get('asin', '')),
+                    'title': title,
+                    'description': description,
+                    'price': price,
+                    'rating': rating,
+                    'review_count': review_count
+                }
+            return None
+        except Exception as e:
+            logger.debug(f"Error processing record: {e}")
+            return None
+    
+    def load_data(self, file_path: str = None, max_records: int = None) -> pd.DataFrame:
+        """Load and process the Amazon Books dataset with improved error handling."""
         if file_path is None:
             file_path = self.data_dir / "meta_Books.jsonl.gz"
         
@@ -56,28 +101,53 @@ class AmazonBooksLoader:
         
         logger.info("Loading and processing data...")
         data = []
+        processed_count = 0
+        error_count = 0
+        
         try:
             with gzip.open(file_path, 'rt', encoding='utf-8') as f:
                 for line in tqdm(f, desc="Processing records"):
                     try:
                         record = json.loads(line)
-                        # Extract relevant fields
-                        processed_record = {
-                            'asin': record.get('asin', ''),
-                            'title': record.get('title', ''),
-                            'description': record.get('description', ''),
-                            'price': float(record.get('price', 0.0)),
-                            'rating': float(record.get('rating', 0.0)),
-                            'review_count': int(record.get('review_count', 0))
-                        }
-                        data.append(processed_record)
-                    except (json.JSONDecodeError, ValueError) as e:
-                        logger.warning(f"Error processing record: {e}")
+                        processed_record = self.process_record(record)
+                        
+                        if processed_record is not None:
+                            data.append(processed_record)
+                            processed_count += 1
+                        else:
+                            error_count += 1
+                        
+                        # Check if we've reached the maximum number of records
+                        if max_records and processed_count >= max_records:
+                            break
+                            
+                    except json.JSONDecodeError:
+                        error_count += 1
+                        continue
+                    except Exception as e:
+                        logger.warning(f"Unexpected error processing record: {e}")
+                        error_count += 1
                         continue
             
+            if not data:
+                logger.error("No valid records found in the dataset")
+                return None
+            
             df = pd.DataFrame(data)
-            logger.info(f"Loaded {len(df)} records")
+            
+            # Log statistics
+            logger.info(f"Successfully processed {processed_count} records")
+            logger.info(f"Encountered {error_count} errors")
+            logger.info(f"Final dataset shape: {df.shape}")
+            
+            # Log data statistics
+            logger.info("\nData Statistics:")
+            logger.info(f"Price range: ${df['price'].min():.2f} - ${df['price'].max():.2f}")
+            logger.info(f"Rating range: {df['rating'].min():.1f} - {df['rating'].max():.1f}")
+            logger.info(f"Review count range: {df['review_count'].min()} - {df['review_count'].max()}")
+            
             return df
+            
         except Exception as e:
             logger.error(f"Error loading data: {e}")
             return None
@@ -198,8 +268,8 @@ def main():
     # Initialize loader
     loader = AmazonBooksLoader()
     
-    # Load data
-    df = loader.load_data()
+    # Load data with a limit for testing
+    df = loader.load_data(max_records=10000)  # Limit to 10,000 records for testing
     if df is None:
         logger.error("Failed to load data")
         return
