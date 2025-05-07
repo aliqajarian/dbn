@@ -8,8 +8,10 @@ import json
 import logging
 from tqdm import tqdm
 from datetime import datetime
-from ..utils.review_visualizer import ReviewVisualizer
-from .review_analyzer import ReviewAnalyzer
+import gzip
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+from transformers import AutoTokenizer, AutoModel
 
 class ModelTrainer:
     def __init__(self, model_dir: str = "models/checkpoints"):
@@ -24,30 +26,105 @@ class ModelTrainer:
         self.logger = logging.getLogger(__name__)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
+        # Initialize tokenizer and model
+        self.tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
+        self.model = AutoModel.from_pretrained('bert-base-uncased').to(self.device)
+        
+    def load_books_data(self, file_path: str, max_items: int = 1000) -> pd.DataFrame:
+        """
+        Load and process books data from the meta_Books.jsonl.gz file.
+        
+        Args:
+            file_path (str): Path to the meta_Books.jsonl.gz file
+            max_items (int): Maximum number of items to load
+            
+        Returns:
+            pd.DataFrame: Processed books data
+        """
+        self.logger.info(f"Loading data from {file_path}")
+        data = []
+        
+        with gzip.open(file_path, 'rt', encoding='utf-8') as f:
+            for i, line in enumerate(tqdm(f, desc="Loading books")):
+                if i >= max_items:
+                    break
+                    
+                try:
+                    item = json.loads(line.strip())
+                    # Extract relevant fields for analysis
+                    processed_item = {
+                        'asin': item.get('parent_asin', ''),
+                        'title': item.get('title', ''),
+                        'description': ' '.join(item.get('description', [])),
+                        'categories': item.get('categories', []),
+                        'price': float(item.get('price', 0.0)),
+                        'average_rating': float(item.get('average_rating', 0.0)),
+                        'rating_count': int(item.get('rating_number', 0)),
+                        'main_category': item.get('main_category', ''),
+                        'features': item.get('features', []),
+                        'author': item.get('author', {}).get('name', '') if item.get('author') else ''
+                    }
+                    data.append(processed_item)
+                except Exception as e:
+                    self.logger.warning(f"Error processing item at line {i}: {e}")
+                    continue
+        
+        df = pd.DataFrame(data)
+        self.logger.info(f"Loaded {len(df)} items")
+        return df
+    
+    def prepare_data(self, df: pd.DataFrame) -> tuple:
+        """
+        Prepare data for training.
+        
+        Args:
+            df (pd.DataFrame): Input DataFrame
+            
+        Returns:
+            tuple: (X, y) where X is the input features and y is the target
+        """
+        # Combine text features
+        df['text'] = df.apply(lambda x: f"Title: {x['title']} Description: {x['description']} Features: {' '.join(x['features'])}", axis=1)
+        
+        # Create target variable (example: predict if book is highly rated)
+        df['is_highly_rated'] = (df['average_rating'] >= 4.0).astype(int)
+        
+        # Tokenize text
+        encodings = self.tokenizer(
+            df['text'].tolist(),
+            truncation=True,
+            padding=True,
+            max_length=512,
+            return_tensors='pt'
+        )
+        
+        # Move to device
+        input_ids = encodings['input_ids'].to(self.device)
+        attention_mask = encodings['attention_mask'].to(self.device)
+        labels = torch.tensor(df['is_highly_rated'].values, dtype=torch.long).to(self.device)
+        
+        return (input_ids, attention_mask), labels
+    
     def train(self, 
-              train_data: pd.DataFrame,
-              val_data: pd.DataFrame,
+              train_data: tuple,
+              val_data: tuple,
               batch_size: int = 32,
               epochs: int = 10,
               learning_rate: float = 0.001,
               checkpoint_freq: int = 1):
         """
-        Train the review analyzer model.
+        Train the model.
         
         Args:
-            train_data (pd.DataFrame): Training data
-            val_data (pd.DataFrame): Validation data
+            train_data (tuple): (X_train, y_train)
+            val_data (tuple): (X_val, y_val)
             batch_size (int): Batch size for training
             epochs (int): Number of epochs to train
             learning_rate (float): Learning rate for optimizer
             checkpoint_freq (int): Frequency of saving checkpoints (in epochs)
         """
-        # Initialize model and move to device
-        model = ReviewAnalyzer()
-        model.to(self.device)
-        
         # Initialize optimizer and loss function
-        optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+        optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         criterion = nn.CrossEntropyLoss()
         
         # Training history
@@ -65,19 +142,27 @@ class ModelTrainer:
         
         # Training loop
         for epoch in range(epochs):
-            model.train()
+            self.model.train()
             train_loss = 0
             train_correct = 0
             train_total = 0
             
             # Training phase
-            for batch in tqdm(self._get_batches(train_data, batch_size), 
-                            desc=f"Epoch {epoch + 1}/{epochs} [Train]"):
+            for i in tqdm(range(0, len(train_data[0][0]), batch_size), desc=f"Epoch {epoch + 1}/{epochs} [Train]"):
+                # Get batch
+                batch_input_ids = train_data[0][0][i:i + batch_size]
+                batch_attention_mask = train_data[0][1][i:i + batch_size]
+                batch_labels = train_data[1][i:i + batch_size]
+                
                 optimizer.zero_grad()
                 
                 # Forward pass
-                outputs = model(batch['text'])
-                loss = criterion(outputs, batch['labels'])
+                outputs = self.model(
+                    input_ids=batch_input_ids,
+                    attention_mask=batch_attention_mask
+                )
+                logits = outputs.last_hidden_state[:, 0, :]  # Use [CLS] token
+                loss = criterion(logits, batch_labels)
                 
                 # Backward pass
                 loss.backward()
@@ -85,33 +170,42 @@ class ModelTrainer:
                 
                 # Update metrics
                 train_loss += loss.item()
-                _, predicted = torch.max(outputs.data, 1)
-                train_total += batch['labels'].size(0)
-                train_correct += (predicted == batch['labels']).sum().item()
+                _, predicted = torch.max(logits.data, 1)
+                train_total += batch_labels.size(0)
+                train_correct += (predicted == batch_labels).sum().item()
             
             # Calculate training metrics
-            avg_train_loss = train_loss / len(train_data)
+            avg_train_loss = train_loss / len(train_data[0][0])
             train_acc = 100 * train_correct / train_total
             
             # Validation phase
-            model.eval()
+            self.model.eval()
             val_loss = 0
             val_correct = 0
             val_total = 0
             
             with torch.no_grad():
-                for batch in tqdm(self._get_batches(val_data, batch_size), 
-                                desc=f"Epoch {epoch + 1}/{epochs} [Val]"):
-                    outputs = model(batch['text'])
-                    loss = criterion(outputs, batch['labels'])
+                for i in tqdm(range(0, len(val_data[0][0]), batch_size), desc=f"Epoch {epoch + 1}/{epochs} [Val]"):
+                    # Get batch
+                    batch_input_ids = val_data[0][0][i:i + batch_size]
+                    batch_attention_mask = val_data[0][1][i:i + batch_size]
+                    batch_labels = val_data[1][i:i + batch_size]
+                    
+                    # Forward pass
+                    outputs = self.model(
+                        input_ids=batch_input_ids,
+                        attention_mask=batch_attention_mask
+                    )
+                    logits = outputs.last_hidden_state[:, 0, :]
+                    loss = criterion(logits, batch_labels)
                     
                     val_loss += loss.item()
-                    _, predicted = torch.max(outputs.data, 1)
-                    val_total += batch['labels'].size(0)
-                    val_correct += (predicted == batch['labels']).sum().item()
+                    _, predicted = torch.max(logits.data, 1)
+                    val_total += batch_labels.size(0)
+                    val_correct += (predicted == batch_labels).sum().item()
             
             # Calculate validation metrics
-            avg_val_loss = val_loss / len(val_data)
+            avg_val_loss = val_loss / len(val_data[0][0])
             val_acc = 100 * val_correct / val_total
             
             # Update history
@@ -130,7 +224,7 @@ class ModelTrainer:
             # Save checkpoint
             if (epoch + 1) % checkpoint_freq == 0:
                 self._save_checkpoint(
-                    model=model,
+                    model=self.model,
                     optimizer=optimizer,
                     epoch=epoch,
                     history=history,
@@ -139,7 +233,7 @@ class ModelTrainer:
         
         # Save final model and training history
         self._save_checkpoint(
-            model=model,
+            model=self.model,
             optimizer=optimizer,
             epoch=epochs - 1,
             history=history,
@@ -148,16 +242,6 @@ class ModelTrainer:
         )
         
         return history
-    
-    def _get_batches(self, data: pd.DataFrame, batch_size: int):
-        """Generate batches of data for training."""
-        for i in range(0, len(data), batch_size):
-            batch_data = data.iloc[i:i + batch_size]
-            yield {
-                'text': batch_data['review_text'].values,
-                'labels': torch.tensor(batch_data['is_anomaly'].values, 
-                                     dtype=torch.long).to(self.device)
-            }
     
     def _save_checkpoint(self, 
                         model: nn.Module,
@@ -208,29 +292,27 @@ def main():
     # Initialize trainer
     trainer = ModelTrainer()
     
-    # First ensure data is downloaded
-    from ..data.download_data import DataDownloader
-    downloader = DataDownloader()
-    downloaded_files = downloader.download_all()
-    
     # Load and prepare data
-    from ..data.amazon_loader import AmazonBooksLoader
-    loader = AmazonBooksLoader(downloaded_files['books'])
+    books_df = trainer.load_books_data("data/raw/meta_Books.jsonl.gz", max_items=1000)
     
-    # Load and split data
-    books_df = loader.load_data(max_items=1000)
-    reviews_df = loader.get_reviews(downloaded_files['reviews'], max_reviews=10000)
-    merged_df = loader.merge_books_and_reviews(books_df, reviews_df)
-    analysis_df = loader.prepare_for_analysis(merged_df)
+    # Prepare data for training
+    X, y = trainer.prepare_data(books_df)
     
     # Split data into train and validation sets
-    from sklearn.model_selection import train_test_split
-    train_df, val_df = train_test_split(analysis_df, test_size=0.2, random_state=42)
+    train_size = int(0.8 * len(X[0]))
+    train_data = (
+        (X[0][:train_size], X[1][:train_size]),
+        y[:train_size]
+    )
+    val_data = (
+        (X[0][train_size:], X[1][train_size:]),
+        y[train_size:]
+    )
     
     # Train model
     history = trainer.train(
-        train_data=train_df,
-        val_data=val_df,
+        train_data=train_data,
+        val_data=val_data,
         batch_size=32,
         epochs=10,
         learning_rate=0.001,
