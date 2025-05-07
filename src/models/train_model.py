@@ -10,7 +10,6 @@ from tqdm import tqdm
 from datetime import datetime
 from sklearn.model_selection import train_test_split
 from transformers import AutoTokenizer, AutoModel
-import gzip
 
 class ModelTrainer:
     def __init__(self, model_dir: str = "models/checkpoints"):
@@ -31,45 +30,40 @@ class ModelTrainer:
         
     def load_reviews_data(self, file_path: str, max_items: int = 1000) -> pd.DataFrame:
         """
-        Load and process reviews data from the gzipped JSON file.
+        Load and process reviews data from the CSV file.
         
         Args:
-            file_path (str): Path to the reviews JSON file
+            file_path (str): Path to the reviews CSV file
             max_items (int): Maximum number of items to load
             
         Returns:
             pd.DataFrame: Processed reviews data
         """
         self.logger.info(f"Loading data from {file_path}")
-        data = []
         
-        with gzip.open(file_path, 'rt', encoding='utf-8') as f:
-            for i, line in enumerate(tqdm(f, desc="Loading reviews")):
-                if i >= max_items:
-                    break
-                    
-                try:
-                    review = json.loads(line.strip())
-                    # Extract relevant fields for analysis
-                    processed_review = {
-                        'asin': review.get('asin', ''),
-                        'parent_asin': review.get('parent_asin', ''),
-                        'user_id': review.get('user_id', ''),
-                        'rating': float(review.get('rating', 0.0)),
-                        'title': review.get('title', ''),
-                        'text': review.get('text', ''),
-                        'helpful_votes': int(review.get('helpful_votes', 0)),
-                        'verified_purchase': bool(review.get('verified_purchase', False)),
-                        'sort_timestamp': int(review.get('sort_timestamp', 0))
-                    }
-                    data.append(processed_review)
-                except Exception as e:
-                    self.logger.warning(f"Error processing review at line {i}: {e}")
-                    continue
-        
-        df = pd.DataFrame(data)
-        self.logger.info(f"Loaded {len(df)} reviews")
-        return df
+        try:
+            # Read CSV file
+            df = pd.read_csv(file_path, nrows=max_items)
+            
+            # Process the data
+            processed_df = pd.DataFrame({
+                'asin': df['asin'],
+                'parent_asin': df['parent_asin'],
+                'user_id': df['user_id'],
+                'rating': df['rating'].astype(float),
+                'title': df['title'].fillna(''),
+                'text': df['text'].fillna(''),
+                'helpful_votes': df['helpful_votes'].fillna(0).astype(int),
+                'verified_purchase': df['verified_purchase'].fillna(False).astype(bool),
+                'sort_timestamp': df['sort_timestamp'].fillna(0).astype(int)
+            })
+            
+            self.logger.info(f"Loaded {len(processed_df)} reviews")
+            return processed_df
+            
+        except Exception as e:
+            self.logger.error(f"Error loading data: {str(e)}")
+            raise
     
     def prepare_data(self, df: pd.DataFrame) -> tuple:
         """
@@ -291,7 +285,7 @@ def main():
     trainer = ModelTrainer()
     
     # Load and prepare data
-    reviews_df = trainer.load_reviews_data("data/raw/reviews_Books.json.gz", max_items=1000)
+    reviews_df = trainer.load_reviews_data("data/raw/Books_5.csv", max_items=1000)
     
     # Prepare data for training
     X, y = trainer.prepare_data(reviews_df)

@@ -1,11 +1,11 @@
-import requests
-import gzip
+import kagglehub
 import shutil
 from pathlib import Path
 import logging
 from tqdm import tqdm
 import os
 import json
+import pandas as pd
 
 class DataDownloader:
     def __init__(self, data_dir: str = "data/raw"):
@@ -19,84 +19,34 @@ class DataDownloader:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.logger = logging.getLogger(__name__)
         
-        # Amazon dataset URLs
-        self.urls = {
-            'reviews': 'https://datarepo.eng.ucsd.edu/mcauley_group/data/amazon_v2/categoryFilesSmall/Books_5.json.gz'
-        }
+        # Kaggle dataset ID
+        self.dataset_id = "mohamedbakhet/amazon-books-reviews"
     
-    def verify_gzip_file(self, filepath: Path) -> bool:
+    def download_dataset(self) -> str:
         """
-        Verify that a file is a valid gzipped JSON file.
+        Download the Kaggle dataset.
         
-        Args:
-            filepath (Path): Path to the file to verify
-            
         Returns:
-            bool: True if file is valid gzipped JSON, False otherwise
+            str: Path to the downloaded dataset directory
         """
         try:
-            with gzip.open(filepath, 'rt', encoding='utf-8') as f:
-                # Try to read first line
-                line = f.readline()
-                json.loads(line.strip())
-            return True
+            # Download dataset from Kaggle
+            self.logger.info(f"Downloading dataset: {self.dataset_id}")
+            dataset_path = kagglehub.dataset_download(self.dataset_id)
+            self.logger.info(f"Dataset downloaded to: {dataset_path}")
+            
+            # Copy files to our data directory
+            dataset_path = Path(dataset_path)
+            for file in dataset_path.glob("*"):
+                if file.is_file():
+                    dest_path = self.data_dir / file.name
+                    shutil.copy2(file, dest_path)
+                    self.logger.info(f"Copied {file.name} to {dest_path}")
+            
+            return str(dataset_path)
+            
         except Exception as e:
-            self.logger.error(f"File {filepath} is not a valid gzipped JSON file: {str(e)}")
-            return False
-    
-    def download_file(self, url: str, filename: str) -> str:
-        """
-        Download a file from URL with progress bar.
-        
-        Args:
-            url (str): URL to download from
-            filename (str): Name to save the file as
-            
-        Returns:
-            str: Path to the downloaded file
-        """
-        filepath = self.data_dir / filename
-        
-        # Check if file exists and is valid
-        if filepath.exists():
-            if self.verify_gzip_file(filepath):
-                self.logger.info(f"Valid file already exists: {filepath}")
-                return str(filepath)
-            else:
-                self.logger.warning(f"Existing file is invalid, removing: {filepath}")
-                filepath.unlink()
-        
-        try:
-            # Stream the download with progress bar
-            response = requests.get(url, stream=True)
-            response.raise_for_status()  # Raise an error for bad status codes
-            
-            # Get total file size
-            total_size = int(response.headers.get('content-length', 0))
-            
-            # Download with progress bar
-            with open(filepath, 'wb') as f, tqdm(
-                desc=filename,
-                total=total_size,
-                unit='iB',
-                unit_scale=True,
-                unit_divisor=1024,
-            ) as pbar:
-                for data in response.iter_content(chunk_size=1024):
-                    size = f.write(data)
-                    pbar.update(size)
-            
-            # Verify the downloaded file
-            if not self.verify_gzip_file(filepath):
-                raise ValueError(f"Downloaded file {filename} is not a valid gzipped JSON file")
-            
-            self.logger.info(f"Successfully downloaded and verified {filename}")
-            return str(filepath)
-            
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"Error downloading {filename}: {str(e)}")
-            if filepath.exists():
-                filepath.unlink()  # Remove partial download
+            self.logger.error(f"Failed to download dataset: {str(e)}")
             raise
     
     def download_all(self) -> dict:
@@ -109,12 +59,14 @@ class DataDownloader:
         downloaded_files = {}
         
         try:
-            # Download reviews
-            reviews_path = self.download_file(
-                self.urls['reviews'],
-                'reviews_Books.json.gz'
-            )
-            downloaded_files['reviews'] = reviews_path
+            # Download dataset
+            dataset_path = self.download_dataset()
+            downloaded_files['dataset'] = dataset_path
+            
+            # List all files in the data directory
+            for file in self.data_dir.glob("*"):
+                if file.is_file():
+                    downloaded_files[file.stem] = str(file)
             
             return downloaded_files
             
