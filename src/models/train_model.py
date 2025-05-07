@@ -8,7 +8,6 @@ import json
 import logging
 from tqdm import tqdm
 from datetime import datetime
-from sklearn.model_selection import train_test_split
 from transformers import AutoTokenizer, AutoModel
 import os
 from google.colab import drive
@@ -36,16 +35,24 @@ class ModelTrainer:
         # Initialize tokenizer and model
         self.tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
         self.model = AutoModel.from_pretrained('bert-base-uncased').to(self.device)
+        
+        # Initialize optimizer
+        self.optimizer = optim.AdamW(self.model.parameters(), lr=2e-5)
+        
+        # Initialize loss function
+        self.criterion = nn.CrossEntropyLoss()
     
     def _setup_gdrive(self):
         """Set up Google Drive integration."""
         try:
+            # Check if we're in a Colab environment
+            import google.colab
             drive.mount('/content/drive')
             self.gdrive_dir = Path('/content/drive/MyDrive/amazon_reviews_model')
             self.gdrive_dir.mkdir(parents=True, exist_ok=True)
             self.logger.info(f"Google Drive mounted at {self.gdrive_dir}")
-        except Exception as e:
-            self.logger.error(f"Error mounting Google Drive: {str(e)}")
+        except (ImportError, Exception) as e:
+            self.logger.warning(f"Google Drive mounting not available: {str(e)}")
             self.use_gdrive = False
     
     def save_to_gdrive(self, file_path: str, content: dict = None):
@@ -73,7 +80,7 @@ class ModelTrainer:
             
             self.logger.info(f"Saved to Google Drive: {gdrive_path}")
         except Exception as e:
-            self.logger.error(f"Error saving to Google Drive: {str(e)}")
+            self.logger.warning(f"Failed to save to Google Drive: {str(e)}")
     
     def load_reviews_data(self, file_path: str, max_items: int = 1000) -> pd.DataFrame:
         """
@@ -86,7 +93,7 @@ class ModelTrainer:
         Returns:
             pd.DataFrame: Processed reviews data
         """
-        self.logger.info(f"Loading data from {file_path}")
+        self.logger.info(f"Loading reviews data from {file_path}")
         
         try:
             # Check if file exists
@@ -111,14 +118,11 @@ class ModelTrainer:
             
             # Map column names to expected format
             column_mapping = {
-                'Id': 'asin',
-                'ProductId': 'parent_asin',
-                'UserId': 'user_id',
-                'Score': 'rating',
-                'Summary': 'title',
-                'Text': 'text',
-                'HelpfulnessNumerator': 'helpful_votes',
-                'Time': 'sort_timestamp'
+                'Title': 'title',
+                'description': 'text',
+                'authors': 'author',
+                'ratingsCount': 'rating',
+                'categories': 'category'
             }
             
             # Rename columns if they exist
@@ -130,14 +134,10 @@ class ModelTrainer:
             processed_data = {}
             
             # Handle required columns
-            for col in ['asin', 'parent_asin', 'user_id', 'rating', 'title', 'text', 'helpful_votes', 'sort_timestamp']:
+            for col in ['title', 'text', 'rating']:
                 if col in df.columns:
                     if col == 'rating':
-                        processed_data[col] = df[col].astype(float)
-                    elif col == 'helpful_votes':
-                        processed_data[col] = df[col].fillna(0).astype(int)
-                    elif col == 'sort_timestamp':
-                        processed_data[col] = df[col].fillna(0).astype(int)
+                        processed_data[col] = df[col].fillna(0).astype(float)
                     else:
                         processed_data[col] = df[col].fillna('')
                 else:
@@ -145,14 +145,15 @@ class ModelTrainer:
                     # Add default values for missing columns
                     if col == 'rating':
                         processed_data[col] = pd.Series(0.0, index=df.index)
-                    elif col == 'helpful_votes':
-                        processed_data[col] = pd.Series(0, index=df.index)
-                    elif col == 'sort_timestamp':
-                        processed_data[col] = pd.Series(0, index=df.index)
                     else:
                         processed_data[col] = pd.Series('', index=df.index)
             
-            # Add verified_purchase column (not in the dataset, so default to False)
+            # Add required columns for compatibility
+            processed_data['asin'] = pd.Series([f'book_{i}' for i in range(len(df))], index=df.index)
+            processed_data['parent_asin'] = processed_data['asin']
+            processed_data['user_id'] = pd.Series([f'user_{i}' for i in range(len(df))], index=df.index)
+            processed_data['helpful_votes'] = pd.Series(0, index=df.index)
+            processed_data['sort_timestamp'] = pd.Series(0, index=df.index)
             processed_data['verified_purchase'] = pd.Series(False, index=df.index)
             
             processed_df = pd.DataFrame(processed_data)
@@ -161,7 +162,7 @@ class ModelTrainer:
             return processed_df
             
         except Exception as e:
-            self.logger.error(f"Error loading data: {str(e)}")
+            self.logger.error(f"Error loading reviews data: {str(e)}")
             raise
     
     def prepare_data(self, df: pd.DataFrame) -> tuple:
@@ -196,193 +197,169 @@ class ModelTrainer:
         
         return (input_ids, attention_mask), labels, df['text'].tolist()
     
-    def train(self, 
-              train_data: tuple,
-              val_data: tuple,
-              batch_size: int = 32,
-              epochs: int = 10,
-              learning_rate: float = 0.001,
-              checkpoint_freq: int = 1):
+    def train(self, train_data: tuple, val_data: tuple = None, epochs: int = 3, batch_size: int = 32):
         """
         Train the model.
         
         Args:
             train_data (tuple): (X_train, y_train, texts_train)
             val_data (tuple): (X_val, y_val, texts_val)
-            batch_size (int): Batch size for training
             epochs (int): Number of epochs to train
-            learning_rate (float): Learning rate for optimizer
-            checkpoint_freq (int): Frequency of saving checkpoints (in epochs)
+            batch_size (int): Batch size for training
         """
-        # Initialize optimizer and loss function
-        optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
-        criterion = nn.CrossEntropyLoss()
-        
-        # Training history
-        history = {
-            'train_loss': [],
-            'val_loss': [],
-            'train_acc': [],
-            'val_acc': [],
-            'learning_rates': []
-        }
+        X_train, y_train, texts = train_data
+        self.model.train()
         
         # Create timestamp for this training run
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         checkpoint_dir = self.model_dir / timestamp
-        checkpoint_dir.mkdir(exist_ok=True)
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
         
-        # Training loop
+        # Training history
+        history = {
+            'train_loss': [],
+            'train_acc': [],
+            'val_loss': [],
+            'val_acc': []
+        }
+        
         for epoch in range(epochs):
-            self.model.train()
-            train_loss = 0
-            train_correct = 0
-            train_total = 0
+            self.logger.info(f"Epoch {epoch + 1}/{epochs}")
+            total_loss = 0
+            correct = 0
+            total = 0
             
-            # Training phase
-            for i in tqdm(range(0, len(train_data[0][0]), batch_size), desc=f"Epoch {epoch + 1}/{epochs} [Train]"):
+            # Training loop
+            for i in tqdm(range(0, len(X_train[0]), batch_size), desc="Training"):
                 # Get batch
-                batch_input_ids = train_data[0][0][i:i + batch_size]
-                batch_attention_mask = train_data[0][1][i:i + batch_size]
-                batch_labels = train_data[1][i:i + batch_size]
+                batch_input_ids = X_train[0][i:i + batch_size]
+                batch_attention_mask = X_train[1][i:i + batch_size]
+                batch_labels = y_train[i:i + batch_size]
                 
-                optimizer.zero_grad()
+                # Forward pass
+                self.optimizer.zero_grad()
+                outputs = self.model(
+                    input_ids=batch_input_ids,
+                    attention_mask=batch_attention_mask
+                )
+                logits = outputs.last_hidden_state[:, 0, :]
+                loss = self.criterion(logits, batch_labels)
+                
+                # Backward pass
+                loss.backward()
+                self.optimizer.step()
+                
+                # Calculate accuracy
+                _, predicted = torch.max(logits.data, 1)
+                total += batch_labels.size(0)
+                correct += (predicted == batch_labels).sum().item()
+                total_loss += loss.item()
+            
+            # Calculate epoch metrics
+            epoch_loss = total_loss / (len(X_train[0]) / batch_size)
+            epoch_acc = correct / total
+            
+            history['train_loss'].append(epoch_loss)
+            history['train_acc'].append(epoch_acc)
+            
+            self.logger.info(f"Epoch {epoch + 1} - Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.4f}")
+            
+            # Validation
+            if val_data is not None:
+                val_loss, val_acc = self._validate(val_data, batch_size)
+                history['val_loss'].append(val_loss)
+                history['val_acc'].append(val_acc)
+                self.logger.info(f"Validation - Loss: {val_loss:.4f}, Accuracy: {val_acc:.4f}")
+            
+            # Save checkpoint
+            checkpoint = {
+                'epoch': epoch + 1,
+                'model_state_dict': self.model.state_dict(),
+                'optimizer_state_dict': self.optimizer.state_dict(),
+                'loss': epoch_loss,
+                'accuracy': epoch_acc
+            }
+            
+            checkpoint_path = checkpoint_dir / f"checkpoint_epoch_{epoch + 1}.pt"
+            torch.save(checkpoint, checkpoint_path)
+            
+            if self.use_gdrive:
+                try:
+                    gdrive_checkpoint_path = self.gdrive_dir / "checkpoints" / timestamp / f"checkpoint_epoch_{epoch + 1}.pt"
+                    gdrive_checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+                    torch.save(checkpoint, gdrive_checkpoint_path)
+                except Exception as e:
+                    self.logger.warning(f"Failed to save checkpoint to Google Drive: {str(e)}")
+        
+        # Save final model
+        final_model_path = checkpoint_dir / "final_model.pt"
+        torch.save(self.model.state_dict(), final_model_path)
+        
+        if self.use_gdrive:
+            try:
+                gdrive_final_path = self.gdrive_dir / "checkpoints" / timestamp / "final_model.pt"
+                gdrive_final_path.parent.mkdir(parents=True, exist_ok=True)
+                torch.save(self.model.state_dict(), gdrive_final_path)
+            except Exception as e:
+                self.logger.warning(f"Failed to save final model to Google Drive: {str(e)}")
+        
+        # Save training history
+        history_path = checkpoint_dir / "training_history.json"
+        with open(history_path, 'w') as f:
+            json.dump(history, f, indent=4)
+        
+        if self.use_gdrive:
+            try:
+                gdrive_history_path = self.gdrive_dir / "checkpoints" / timestamp / "training_history.json"
+                gdrive_history_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(gdrive_history_path, 'w') as f:
+                    json.dump(history, f, indent=4)
+            except Exception as e:
+                self.logger.warning(f"Failed to save training history to Google Drive: {str(e)}")
+    
+    def _validate(self, val_data: tuple, batch_size: int) -> tuple:
+        """
+        Validate the model.
+        
+        Args:
+            val_data (tuple): (X_val, y_val, texts_val)
+            batch_size (int): Batch size for validation
+            
+        Returns:
+            tuple: (val_loss, val_acc)
+        """
+        X_val, y_val, _ = val_data
+        self.model.eval()
+        
+        total_loss = 0
+        correct = 0
+        total = 0
+        
+        with torch.no_grad():
+            for i in range(0, len(X_val[0]), batch_size):
+                # Get batch
+                batch_input_ids = X_val[0][i:i + batch_size]
+                batch_attention_mask = X_val[1][i:i + batch_size]
+                batch_labels = y_val[i:i + batch_size]
                 
                 # Forward pass
                 outputs = self.model(
                     input_ids=batch_input_ids,
                     attention_mask=batch_attention_mask
                 )
-                logits = outputs.last_hidden_state[:, 0, :]  # Use [CLS] token
-                loss = criterion(logits, batch_labels)
+                logits = outputs.last_hidden_state[:, 0, :]
+                loss = self.criterion(logits, batch_labels)
                 
-                # Backward pass
-                loss.backward()
-                optimizer.step()
-                
-                # Update metrics
-                train_loss += loss.item()
+                # Calculate accuracy
                 _, predicted = torch.max(logits.data, 1)
-                train_total += batch_labels.size(0)
-                train_correct += (predicted == batch_labels).sum().item()
-            
-            # Calculate training metrics
-            avg_train_loss = train_loss / len(train_data[0][0])
-            train_acc = 100 * train_correct / train_total
-            
-            # Validation phase
-            self.model.eval()
-            val_loss = 0
-            val_correct = 0
-            val_total = 0
-            
-            with torch.no_grad():
-                for i in tqdm(range(0, len(val_data[0][0]), batch_size), desc=f"Epoch {epoch + 1}/{epochs} [Val]"):
-                    # Get batch
-                    batch_input_ids = val_data[0][0][i:i + batch_size]
-                    batch_attention_mask = val_data[0][1][i:i + batch_size]
-                    batch_labels = val_data[1][i:i + batch_size]
-                    
-                    # Forward pass
-                    outputs = self.model(
-                        input_ids=batch_input_ids,
-                        attention_mask=batch_attention_mask
-                    )
-                    logits = outputs.last_hidden_state[:, 0, :]
-                    loss = criterion(logits, batch_labels)
-                    
-                    val_loss += loss.item()
-                    _, predicted = torch.max(logits.data, 1)
-                    val_total += batch_labels.size(0)
-                    val_correct += (predicted == batch_labels).sum().item()
-            
-            # Calculate validation metrics
-            avg_val_loss = val_loss / len(val_data[0][0])
-            val_acc = 100 * val_correct / val_total
-            
-            # Update history
-            history['train_loss'].append(avg_train_loss)
-            history['val_loss'].append(avg_val_loss)
-            history['train_acc'].append(train_acc)
-            history['val_acc'].append(val_acc)
-            history['learning_rates'].append(optimizer.param_groups[0]['lr'])
-            
-            # Log metrics
-            self.logger.info(
-                f"Epoch {epoch + 1}/{epochs} - "
-                f"Train Loss: {avg_train_loss:.4f}, Train Acc: {train_acc:.2f}% - "
-                f"Val Loss: {avg_val_loss:.4f}, Val Acc: {val_acc:.2f}%"
-            )
-            
-            # Save checkpoint
-            if (epoch + 1) % checkpoint_freq == 0:
-                self._save_checkpoint(
-                    model=self.model,
-                    optimizer=optimizer,
-                    epoch=epoch,
-                    history=history,
-                    checkpoint_dir=checkpoint_dir
-                )
+                total += batch_labels.size(0)
+                correct += (predicted == batch_labels).sum().item()
+                total_loss += loss.item()
         
-        # Save final model and training history
-        self._save_checkpoint(
-            model=self.model,
-            optimizer=optimizer,
-            epoch=epochs - 1,
-            history=history,
-            checkpoint_dir=checkpoint_dir,
-            is_final=True
-        )
+        val_loss = total_loss / (len(X_val[0]) / batch_size)
+        val_acc = correct / total
         
-        return history
-    
-    def _save_checkpoint(self, 
-                        model: nn.Module,
-                        optimizer: optim.Optimizer,
-                        epoch: int,
-                        history: dict,
-                        checkpoint_dir: Path,
-                        is_final: bool = False):
-        """Save model checkpoint."""
-        checkpoint = {
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'history': history
-        }
-        
-        # Save model checkpoint
-        checkpoint_path = checkpoint_dir / f"checkpoint_epoch_{epoch + 1}.pt"
-        torch.save(checkpoint, checkpoint_path)
-        
-        # Save training history
-        history_path = checkpoint_dir / "training_history.json"
-        with open(history_path, 'w') as f:
-            json.dump(history, f)
-        
-        # Save final model
-        if is_final:
-            final_model_path = checkpoint_dir / "final_model.pt"
-            torch.save(model.state_dict(), final_model_path)
-            
-            # Save model configuration
-            config = {
-                'model_type': model.__class__.__name__,
-                'device': str(self.device),
-                'timestamp': datetime.now().isoformat()
-            }
-            config_path = checkpoint_dir / "model_config.json"
-            with open(config_path, 'w') as f:
-                json.dump(config, f)
-        
-        self.logger.info(f"Saved checkpoint to {checkpoint_path}")
-        
-        # Save to Google Drive if enabled
-        if self.use_gdrive:
-            self.save_to_gdrive(f'model_checkpoints/{checkpoint_path.name}', checkpoint_path)
-            if is_final:
-                self.save_to_gdrive('model_checkpoints/final_model.pt', final_model_path)
-                self.save_to_gdrive('model_checkpoints/model_config.json', config_path)
+        return val_loss, val_acc
 
 def main():
     """Main function to train the model."""
@@ -394,33 +371,12 @@ def main():
     
     try:
         # Load and prepare data
-        reviews_df = trainer.load_reviews_data("data/raw/Books_5.csv", max_items=1000)
-        
-        # Prepare data for training
-        X, y, texts = trainer.prepare_data(reviews_df)
-        
-        # Split data into train and validation sets
-        train_size = int(0.8 * len(X[0]))
-        train_data = (
-            (X[0][:train_size], X[1][:train_size]),
-            y[:train_size],
-            texts[:train_size]
-        )
-        val_data = (
-            (X[0][train_size:], X[1][train_size:]),
-            y[train_size:],
-            texts[train_size:]
-        )
+        train_df = trainer.load_reviews_data("data/raw/Books_5.csv", max_items=1000)
+        train_data = trainer.prepare_data(train_df)
         
         # Train model
-        history = trainer.train(
-            train_data=train_data,
-            val_data=val_data,
-            batch_size=32,
-            epochs=10,
-            learning_rate=0.001,
-            checkpoint_freq=1
-        )
+        trainer.train(train_data, epochs=3, batch_size=32)
+        
     except Exception as e:
         logging.error(f"Error in main: {str(e)}")
         raise

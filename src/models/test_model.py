@@ -50,12 +50,14 @@ class ModelTester:
     def _setup_gdrive(self):
         """Set up Google Drive integration."""
         try:
+            # Check if we're in a Colab environment
+            import google.colab
             drive.mount('/content/drive')
             self.gdrive_dir = Path('/content/drive/MyDrive/amazon_reviews_model')
             self.gdrive_dir.mkdir(parents=True, exist_ok=True)
             self.logger.info(f"Google Drive mounted at {self.gdrive_dir}")
-        except Exception as e:
-            self.logger.error(f"Error mounting Google Drive: {str(e)}")
+        except (ImportError, Exception) as e:
+            self.logger.warning(f"Google Drive mounting not available: {str(e)}")
             self.use_gdrive = False
     
     def save_to_gdrive(self, file_path: str, content: dict = None):
@@ -121,14 +123,11 @@ class ModelTester:
             
             # Map column names to expected format
             column_mapping = {
-                'Id': 'asin',
-                'ProductId': 'parent_asin',
-                'UserId': 'user_id',
-                'Score': 'rating',
-                'Summary': 'title',
-                'Text': 'text',
-                'HelpfulnessNumerator': 'helpful_votes',
-                'Time': 'sort_timestamp'
+                'Title': 'title',
+                'description': 'text',
+                'authors': 'author',
+                'ratingsCount': 'rating',
+                'categories': 'category'
             }
             
             # Rename columns if they exist
@@ -140,14 +139,10 @@ class ModelTester:
             processed_data = {}
             
             # Handle required columns
-            for col in ['asin', 'parent_asin', 'user_id', 'rating', 'title', 'text', 'helpful_votes', 'sort_timestamp']:
+            for col in ['title', 'text', 'rating']:
                 if col in df.columns:
                     if col == 'rating':
-                        processed_data[col] = df[col].astype(float)
-                    elif col == 'helpful_votes':
-                        processed_data[col] = df[col].fillna(0).astype(int)
-                    elif col == 'sort_timestamp':
-                        processed_data[col] = df[col].fillna(0).astype(int)
+                        processed_data[col] = df[col].fillna(0).astype(float)
                     else:
                         processed_data[col] = df[col].fillna('')
                 else:
@@ -155,14 +150,15 @@ class ModelTester:
                     # Add default values for missing columns
                     if col == 'rating':
                         processed_data[col] = pd.Series(0.0, index=df.index)
-                    elif col == 'helpful_votes':
-                        processed_data[col] = pd.Series(0, index=df.index)
-                    elif col == 'sort_timestamp':
-                        processed_data[col] = pd.Series(0, index=df.index)
                     else:
                         processed_data[col] = pd.Series('', index=df.index)
             
-            # Add verified_purchase column (not in the dataset, so default to False)
+            # Add required columns for compatibility
+            processed_data['asin'] = pd.Series([f'book_{i}' for i in range(len(df))], index=df.index)
+            processed_data['parent_asin'] = processed_data['asin']
+            processed_data['user_id'] = pd.Series([f'user_{i}' for i in range(len(df))], index=df.index)
+            processed_data['helpful_votes'] = pd.Series(0, index=df.index)
+            processed_data['sort_timestamp'] = pd.Series(0, index=df.index)
             processed_data['verified_purchase'] = pd.Series(False, index=df.index)
             
             processed_df = pd.DataFrame(processed_data)
@@ -182,7 +178,7 @@ class ModelTester:
             df (pd.DataFrame): Input DataFrame
             
         Returns:
-            tuple: (X, y) where X is the input features and y is the target
+            tuple: (X, y, texts) where X is the input features, y is the target, and texts is the raw text
         """
         # Combine text features
         df['text'] = df.apply(lambda x: f"Title: {x['title']} Review: {x['text']}", axis=1)
@@ -208,14 +204,25 @@ class ModelTester:
     
     def load_model(self, checkpoint_path: str):
         """
-        Load a trained model from checkpoint.
+        Load model from checkpoint.
         
         Args:
             checkpoint_path (str): Path to the model checkpoint
         """
         try:
             checkpoint = torch.load(checkpoint_path, map_location=self.device)
-            self.model.load_state_dict(checkpoint['model_state_dict'])
+            
+            # Handle different checkpoint formats
+            if isinstance(checkpoint, dict):
+                if 'model_state_dict' in checkpoint:
+                    self.model.load_state_dict(checkpoint['model_state_dict'])
+                elif 'state_dict' in checkpoint:
+                    self.model.load_state_dict(checkpoint['state_dict'])
+                else:
+                    self.model.load_state_dict(checkpoint)
+            else:
+                self.model.load_state_dict(checkpoint)
+            
             self.model.eval()
             self.logger.info(f"Loaded model from {checkpoint_path}")
             
@@ -227,25 +234,26 @@ class ModelTester:
     
     def evaluate(self, test_data: tuple) -> dict:
         """
-        Evaluate the model on test data.
+        Evaluate model on test data.
         
         Args:
-            test_data (tuple): (X_test, y_test, texts)
+            test_data (tuple): (X_test, y_test, texts_test)
             
         Returns:
-            dict: Evaluation metrics
+            dict: Evaluation results
         """
+        X_test, y_test, texts = test_data
         self.model.eval()
-        all_predictions = []
-        all_labels = []
-        all_probs = []
+        
+        predictions = []
+        true_labels = []
         
         with torch.no_grad():
-            for i in tqdm(range(0, len(test_data[0][0]), 32), desc="Evaluating"):
+            for i in tqdm(range(0, len(X_test[0]), 32), desc="Evaluating"):
                 # Get batch
-                batch_input_ids = test_data[0][0][i:i + 32]
-                batch_attention_mask = test_data[0][1][i:i + 32]
-                batch_labels = test_data[1][i:i + 32]
+                batch_input_ids = X_test[0][i:i + 32]
+                batch_attention_mask = X_test[1][i:i + 32]
+                batch_labels = y_test[i:i + 32]
                 
                 # Forward pass
                 outputs = self.model(
@@ -253,28 +261,23 @@ class ModelTester:
                     attention_mask=batch_attention_mask
                 )
                 logits = outputs.last_hidden_state[:, 0, :]
-                probs = torch.softmax(logits, dim=1)
                 _, predicted = torch.max(logits.data, 1)
                 
-                all_predictions.extend(predicted.cpu().numpy())
-                all_labels.extend(batch_labels.cpu().numpy())
-                all_probs.extend(probs.cpu().numpy())
+                predictions.extend(predicted.cpu().numpy())
+                true_labels.extend(batch_labels.cpu().numpy())
         
         # Calculate metrics
-        report = classification_report(all_labels, all_predictions, output_dict=True)
-        conf_matrix = confusion_matrix(all_labels, all_predictions)
+        results = {
+            'classification_report': classification_report(true_labels, predictions, output_dict=True),
+            'confusion_matrix': confusion_matrix(true_labels, predictions).tolist()
+        }
         
         # Create visualizations
-        self._create_visualizations(all_labels, all_predictions, all_probs, conf_matrix)
+        self._create_visualizations(true_labels, predictions, results['confusion_matrix'])
         
-        return {
-            'classification_report': report,
-            'confusion_matrix': conf_matrix.tolist(),
-            'predictions': all_predictions,
-            'probabilities': all_probs
-        }
+        return results
     
-    def _create_visualizations(self, labels, predictions, probabilities, conf_matrix):
+    def _create_visualizations(self, labels, predictions, conf_matrix):
         """Create various visualizations of the results."""
         # 1. Confusion Matrix
         plt.figure(figsize=(8, 6))
@@ -400,24 +403,29 @@ class ModelTester:
         if self.use_gdrive:
             self.save_to_gdrive('visualizations/model_comparison.html', self.model_dir / "model_comparison.html")
     
-    def save_results(self, results: dict, output_path: str):
+    def save_results(self, results: dict, output_dir: Path):
         """
-        Save evaluation results to file.
+        Save evaluation results.
         
         Args:
             results (dict): Evaluation results
-            output_path (str): Path to save results
+            output_dir (Path): Directory to save results
         """
-        try:
-            with open(output_path, 'w') as f:
-                json.dump(results, f, indent=4)
-            self.logger.info(f"Saved results to {output_path}")
-            
-            if self.use_gdrive:
-                self.save_to_gdrive('results/test_results.json', results)
-        except Exception as e:
-            self.logger.error(f"Error saving results: {str(e)}")
-            raise
+        # Save results
+        results_path = output_dir / "evaluation_results.json"
+        with open(results_path, 'w') as f:
+            json.dump(results, f, indent=4)
+        
+        self.logger.info(f"Saved evaluation results to {results_path}")
+        
+        if self.use_gdrive:
+            try:
+                gdrive_path = self.gdrive_dir / "evaluation_results.json"
+                with open(gdrive_path, 'w') as f:
+                    json.dump(results, f, indent=4)
+                self.logger.info(f"Saved evaluation results to Google Drive: {gdrive_path}")
+            except Exception as e:
+                self.logger.warning(f"Failed to save to Google Drive: {str(e)}")
 
 def main():
     """Main function to test the model."""
@@ -428,37 +436,35 @@ def main():
     tester = ModelTester(use_gdrive=True)
     
     try:
-        # Load test data
-        test_df = tester.load_test_data("data/raw/Books_5.csv", max_items=1000)
-        
-        # Prepare test data
-        X_test, y_test, texts = tester.prepare_test_data(test_df)
-        
-        # Load latest model checkpoint
+        # Find latest checkpoint directory
         checkpoint_dir = Path("models/checkpoints")
         if not checkpoint_dir.exists():
             raise FileNotFoundError("No model checkpoints found")
         
         # Find latest checkpoint
-        checkpoints = list(checkpoint_dir.glob("**/final_model.pt"))
+        checkpoints = list(checkpoint_dir.glob("**/*.pt"))
         if not checkpoints:
-            raise FileNotFoundError("No final model found")
+            raise FileNotFoundError("No model checkpoints found")
         
         latest_checkpoint = max(checkpoints, key=lambda x: x.stat().st_mtime)
+        checkpoint_dir = latest_checkpoint.parent
+        
+        # Load model
         tester.load_model(str(latest_checkpoint))
         
-        # Evaluate model and compare with baselines
-        results = tester.compare_with_baselines((X_test, y_test, texts))
+        # Load and prepare test data
+        test_df = tester.load_test_data("data/raw/Books_5.csv", max_items=1000)
+        test_data = tester.prepare_test_data(test_df)
+        
+        # Evaluate model
+        results = tester.evaluate(test_data)
         
         # Save results
-        results_path = checkpoint_dir / "test_results.json"
-        tester.save_results(results, str(results_path))
+        tester.save_results(results, checkpoint_dir)
         
         # Print results
-        print("\nTest Results:")
-        print(json.dumps(results['bert']['classification_report'], indent=4))
-        print("\nModel Comparison:")
-        print(json.dumps({k: v['weighted avg'] for k, v in results.items()}, indent=4))
+        print("\nEvaluation Results:")
+        print(json.dumps(results['classification_report'], indent=4))
         
     except Exception as e:
         logging.error(f"Error in main: {str(e)}")
