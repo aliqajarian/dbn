@@ -11,24 +11,70 @@ from datetime import datetime
 from sklearn.model_selection import train_test_split
 from transformers import AutoTokenizer, AutoModel
 import os
+from google.colab import drive
+import warnings
+warnings.filterwarnings('ignore')
 
 class ModelTrainer:
-    def __init__(self, model_dir: str = "models/checkpoints"):
+    def __init__(self, model_dir: str = "models/checkpoints", use_gdrive: bool = False):
         """
         Initialize the model trainer.
         
         Args:
             model_dir (str): Directory to save model checkpoints
+            use_gdrive (bool): Whether to use Google Drive for storage
         """
         self.model_dir = Path(model_dir)
         self.model_dir.mkdir(parents=True, exist_ok=True)
         self.logger = logging.getLogger(__name__)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.use_gdrive = use_gdrive
+        
+        if use_gdrive:
+            self._setup_gdrive()
         
         # Initialize tokenizer and model
         self.tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
         self.model = AutoModel.from_pretrained('bert-base-uncased').to(self.device)
+    
+    def _setup_gdrive(self):
+        """Set up Google Drive integration."""
+        try:
+            drive.mount('/content/drive')
+            self.gdrive_dir = Path('/content/drive/MyDrive/amazon_reviews_model')
+            self.gdrive_dir.mkdir(parents=True, exist_ok=True)
+            self.logger.info(f"Google Drive mounted at {self.gdrive_dir}")
+        except Exception as e:
+            self.logger.error(f"Error mounting Google Drive: {str(e)}")
+            self.use_gdrive = False
+    
+    def save_to_gdrive(self, file_path: str, content: dict = None):
+        """
+        Save file to Google Drive.
         
+        Args:
+            file_path (str): Path to save the file
+            content (dict): Content to save (if saving JSON)
+        """
+        if not self.use_gdrive:
+            return
+        
+        try:
+            gdrive_path = self.gdrive_dir / file_path
+            gdrive_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            if content is not None:
+                with open(gdrive_path, 'w') as f:
+                    json.dump(content, f, indent=4)
+            else:
+                # Copy file to Google Drive
+                import shutil
+                shutil.copy2(file_path, gdrive_path)
+            
+            self.logger.info(f"Saved to Google Drive: {gdrive_path}")
+        except Exception as e:
+            self.logger.error(f"Error saving to Google Drive: {str(e)}")
+    
     def load_reviews_data(self, file_path: str, max_items: int = 1000) -> pd.DataFrame:
         """
         Load and process reviews data from the CSV file.
@@ -126,7 +172,7 @@ class ModelTrainer:
             df (pd.DataFrame): Input DataFrame
             
         Returns:
-            tuple: (X, y) where X is the input features and y is the target
+            tuple: (X, y, texts) where X is the input features, y is the target, and texts is the raw text
         """
         # Combine text features
         df['text'] = df.apply(lambda x: f"Title: {x['title']} Review: {x['text']}", axis=1)
@@ -148,7 +194,7 @@ class ModelTrainer:
         attention_mask = encodings['attention_mask'].to(self.device)
         labels = torch.tensor(df['is_helpful'].values, dtype=torch.long).to(self.device)
         
-        return (input_ids, attention_mask), labels
+        return (input_ids, attention_mask), labels, df['text'].tolist()
     
     def train(self, 
               train_data: tuple,
@@ -161,8 +207,8 @@ class ModelTrainer:
         Train the model.
         
         Args:
-            train_data (tuple): (X_train, y_train)
-            val_data (tuple): (X_val, y_val)
+            train_data (tuple): (X_train, y_train, texts_train)
+            val_data (tuple): (X_val, y_val, texts_val)
             batch_size (int): Batch size for training
             epochs (int): Number of epochs to train
             learning_rate (float): Learning rate for optimizer
@@ -177,7 +223,8 @@ class ModelTrainer:
             'train_loss': [],
             'val_loss': [],
             'train_acc': [],
-            'val_acc': []
+            'val_acc': [],
+            'learning_rates': []
         }
         
         # Create timestamp for this training run
@@ -258,6 +305,7 @@ class ModelTrainer:
             history['val_loss'].append(avg_val_loss)
             history['train_acc'].append(train_acc)
             history['val_acc'].append(val_acc)
+            history['learning_rates'].append(optimizer.param_groups[0]['lr'])
             
             # Log metrics
             self.logger.info(
@@ -328,31 +376,40 @@ class ModelTrainer:
                 json.dump(config, f)
         
         self.logger.info(f"Saved checkpoint to {checkpoint_path}")
+        
+        # Save to Google Drive if enabled
+        if self.use_gdrive:
+            self.save_to_gdrive(f'model_checkpoints/{checkpoint_path.name}', checkpoint_path)
+            if is_final:
+                self.save_to_gdrive('model_checkpoints/final_model.pt', final_model_path)
+                self.save_to_gdrive('model_checkpoints/model_config.json', config_path)
 
 def main():
     """Main function to train the model."""
     # Set up logging
     logging.basicConfig(level=logging.INFO)
     
-    # Initialize trainer
-    trainer = ModelTrainer()
+    # Initialize trainer with Google Drive integration
+    trainer = ModelTrainer(use_gdrive=True)
     
     try:
         # Load and prepare data
         reviews_df = trainer.load_reviews_data("data/raw/Books_5.csv", max_items=1000)
         
         # Prepare data for training
-        X, y = trainer.prepare_data(reviews_df)
+        X, y, texts = trainer.prepare_data(reviews_df)
         
         # Split data into train and validation sets
         train_size = int(0.8 * len(X[0]))
         train_data = (
             (X[0][:train_size], X[1][:train_size]),
-            y[:train_size]
+            y[:train_size],
+            texts[:train_size]
         )
         val_data = (
             (X[0][train_size:], X[1][train_size:]),
-            y[train_size:]
+            y[train_size:],
+            texts[train_size:]
         )
         
         # Train model
