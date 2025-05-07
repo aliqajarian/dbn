@@ -123,8 +123,13 @@ scaler = GradScaler()
 ### Google Colab (Recommended)
 
 1. Create a new Colab notebook
-2. Run the following commands:
+2. Mount Google Drive:
+```python
+from google.colab import drive
+drive.mount('/content/drive')
+```
 
+3. Run the following commands:
 ```python
 # Install requirements
 !pip install torch pandas numpy scikit-learn nltk spacy matplotlib seaborn tqdm plotly
@@ -140,7 +145,7 @@ print(f"GPU Available: {torch.cuda.is_available()}")
 if torch.cuda.is_available():
     print(f"GPU Device: {torch.cuda.get_device_name(0)}")
 
-# Run training
+# Run training with checkpointing
 !python src/train_amazon_optimized.py
 ```
 
@@ -149,6 +154,31 @@ Benefits:
 - 12-15 hours runtime
 - 15GB RAM
 - Pre-installed Python packages
+- Automatic checkpointing and model saving to Google Drive
+- Ability to resume training from last checkpoint
+
+### Checkpointing and Model Saving
+
+The system now includes automatic checkpointing and model saving features:
+
+1. **Checkpoint Location**:
+   - Models are saved in Google Drive: `/content/drive/MyDrive/dbn_checkpoints/`
+   - Checkpoints include:
+     - Model state
+     - Optimizer state
+     - Training metrics
+     - Current epoch
+
+2. **Resuming Training**:
+   - Training automatically resumes from the last checkpoint
+   - No data loss on session disconnection
+   - Progress is preserved between Colab sessions
+
+3. **Output Storage**:
+   - Training logs
+   - Performance metrics
+   - Visualization plots
+   - Model artifacts
 
 ### Kaggle Notebooks
 
