@@ -79,10 +79,13 @@ class AmazonBooksLoader:
         Returns:
             pd.DataFrame: DataFrame containing the reviews
         """
-        if not os.path.exists(reviews_file):
+        reviews_file = Path(reviews_file)
+        if not reviews_file.exists():
             raise FileNotFoundError(f"Reviews file not found: {reviews_file}")
             
+        self.logger.info(f"Loading reviews from {reviews_file}")
         reviews = []
+        
         try:
             with gzip.open(reviews_file, 'rt', encoding='utf-8') as f:
                 for i, line in enumerate(tqdm(f, desc="Loading reviews")):
