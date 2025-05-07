@@ -95,9 +95,11 @@ class AmazonBooksLoader:
     def load_data(self, file_path: str = None, max_records: int = None) -> pd.DataFrame:
         """Load and process the Amazon Books dataset with improved error handling."""
         if file_path is None:
-            file_path = self.data_dir / "meta_Books.jsonl.gz"
+            file_path = str(self.data_dir / "meta_Books.jsonl.gz")
+        else:
+            file_path = str(file_path)
         
-        if not file_path.exists():
+        if not Path(file_path).exists():
             file_path = self.download_data()
         
         logger.info("Loading and processing data...")
