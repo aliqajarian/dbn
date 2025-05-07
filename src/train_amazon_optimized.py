@@ -284,7 +284,7 @@ def main():
     loader = AmazonBooksLoader()
     
     # Load data with a limit for testing
-    df = loader.load_data(max_records=10000)  # Limit to 10,000 records for testing
+    df = loader.load_data(max_records=10000)
     if df is None:
         logger.error("Failed to load data")
         return
@@ -295,21 +295,9 @@ def main():
     # Train model
     model = trainer.train(df)
     
-    # Mount Google Drive if not already mounted
-    try:
-        from google.colab import drive
-        drive.mount('/content/drive')
-        # Create models directory in Google Drive
-        drive_models_dir = "/content/drive/MyDrive/models"
-        os.makedirs(drive_models_dir, exist_ok=True)
-        # Save model to Google Drive
-        model_path = os.path.join(drive_models_dir, "amazon_anomaly_detector.pth")
-    except ImportError:
-        # If not running in Colab, save locally
-        os.makedirs("models", exist_ok=True)
-        model_path = os.path.join("models", "amazon_anomaly_detector.pth")
-    
-    # Save model
+    # Save model locally
+    os.makedirs("models", exist_ok=True)
+    model_path = os.path.join("models", "amazon_anomaly_detector.pth")
     torch.save(model.state_dict(), model_path)
     logger.info(f"Training completed and model saved to {model_path}")
 
