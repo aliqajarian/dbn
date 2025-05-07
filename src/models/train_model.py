@@ -10,6 +10,7 @@ from tqdm import tqdm
 from datetime import datetime
 from sklearn.model_selection import train_test_split
 from transformers import AutoTokenizer, AutoModel
+import os
 
 class ModelTrainer:
     def __init__(self, model_dir: str = "models/checkpoints"):
@@ -42,6 +43,20 @@ class ModelTrainer:
         self.logger.info(f"Loading data from {file_path}")
         
         try:
+            # Check if file exists
+            if not os.path.exists(file_path):
+                # Try to find the file in the data directory
+                data_dir = Path("data/raw")
+                if data_dir.exists():
+                    files = list(data_dir.glob("*.csv"))
+                    if files:
+                        file_path = str(files[0])
+                        self.logger.info(f"Found CSV file: {file_path}")
+                    else:
+                        raise FileNotFoundError(f"No CSV files found in {data_dir}")
+                else:
+                    raise FileNotFoundError(f"Data directory {data_dir} does not exist")
+            
             # Read CSV file
             df = pd.read_csv(file_path, nrows=max_items)
             
@@ -284,32 +299,36 @@ def main():
     # Initialize trainer
     trainer = ModelTrainer()
     
-    # Load and prepare data
-    reviews_df = trainer.load_reviews_data("data/raw/Books_5.csv", max_items=1000)
-    
-    # Prepare data for training
-    X, y = trainer.prepare_data(reviews_df)
-    
-    # Split data into train and validation sets
-    train_size = int(0.8 * len(X[0]))
-    train_data = (
-        (X[0][:train_size], X[1][:train_size]),
-        y[:train_size]
-    )
-    val_data = (
-        (X[0][train_size:], X[1][train_size:]),
-        y[train_size:]
-    )
-    
-    # Train model
-    history = trainer.train(
-        train_data=train_data,
-        val_data=val_data,
-        batch_size=32,
-        epochs=10,
-        learning_rate=0.001,
-        checkpoint_freq=1
-    )
+    try:
+        # Load and prepare data
+        reviews_df = trainer.load_reviews_data("data/raw/Books_5.csv", max_items=1000)
+        
+        # Prepare data for training
+        X, y = trainer.prepare_data(reviews_df)
+        
+        # Split data into train and validation sets
+        train_size = int(0.8 * len(X[0]))
+        train_data = (
+            (X[0][:train_size], X[1][:train_size]),
+            y[:train_size]
+        )
+        val_data = (
+            (X[0][train_size:], X[1][train_size:]),
+            y[train_size:]
+        )
+        
+        # Train model
+        history = trainer.train(
+            train_data=train_data,
+            val_data=val_data,
+            batch_size=32,
+            epochs=10,
+            learning_rate=0.001,
+            checkpoint_freq=1
+        )
+    except Exception as e:
+        logging.error(f"Error in main: {str(e)}")
+        raise
 
 if __name__ == "__main__":
     main() 

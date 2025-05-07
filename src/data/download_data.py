@@ -35,9 +35,15 @@ class DataDownloader:
             dataset_path = kagglehub.dataset_download(self.dataset_id)
             self.logger.info(f"Dataset downloaded to: {dataset_path}")
             
-            # Copy files to our data directory
+            # Print the contents of the dataset directory
             dataset_path = Path(dataset_path)
-            for file in dataset_path.glob("*"):
+            self.logger.info("Dataset contents:")
+            for file in dataset_path.glob("**/*"):
+                if file.is_file():
+                    self.logger.info(f"Found file: {file}")
+            
+            # Copy files to our data directory
+            for file in dataset_path.glob("**/*"):
                 if file.is_file():
                     dest_path = self.data_dir / file.name
                     shutil.copy2(file, dest_path)
@@ -87,8 +93,9 @@ def main():
         downloaded_files = downloader.download_all()
         
         # Print downloaded file paths
+        print("\nDownloaded files:")
         for file_type, path in downloaded_files.items():
-            print(f"Downloaded {file_type}: {path}")
+            print(f"{file_type}: {path}")
             
     except Exception as e:
         print(f"Error downloading data: {str(e)}")
