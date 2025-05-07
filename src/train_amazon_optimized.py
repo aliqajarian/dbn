@@ -11,6 +11,7 @@ import requests
 import gzip
 import json
 from typing import List, Dict, Any
+import os
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -294,9 +295,23 @@ def main():
     # Train model
     model = trainer.train(df)
     
+    # Mount Google Drive if not already mounted
+    try:
+        from google.colab import drive
+        drive.mount('/content/drive')
+        # Create models directory in Google Drive
+        drive_models_dir = "/content/drive/MyDrive/models"
+        os.makedirs(drive_models_dir, exist_ok=True)
+        # Save model to Google Drive
+        model_path = os.path.join(drive_models_dir, "amazon_anomaly_detector.pth")
+    except ImportError:
+        # If not running in Colab, save locally
+        os.makedirs("models", exist_ok=True)
+        model_path = os.path.join("models", "amazon_anomaly_detector.pth")
+    
     # Save model
-    torch.save(model.state_dict(), "models/amazon_anomaly_detector.pth")
-    logger.info("Training completed and model saved")
+    torch.save(model.state_dict(), model_path)
+    logger.info(f"Training completed and model saved to {model_path}")
 
 if __name__ == "__main__":
     main() 
