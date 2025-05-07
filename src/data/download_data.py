@@ -19,29 +19,29 @@ class DataDownloader:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.logger = logging.getLogger(__name__)
         
-        # Amazon Books dataset URLs
+        # Amazon dataset URLs
         self.urls = {
-            'books': 'https://datarepo.eng.ucsd.edu/mcauley_group/data/amazon_v2/metaFiles2/meta_Books.json.gz',
             'reviews': 'https://datarepo.eng.ucsd.edu/mcauley_group/data/amazon_v2/categoryFilesSmall/Books_5.json.gz'
         }
     
     def verify_gzip_file(self, filepath: Path) -> bool:
         """
-        Verify that a file is a valid gzip file.
+        Verify that a file is a valid gzipped JSON file.
         
         Args:
             filepath (Path): Path to the file to verify
             
         Returns:
-            bool: True if file is valid gzip, False otherwise
+            bool: True if file is valid gzipped JSON, False otherwise
         """
         try:
             with gzip.open(filepath, 'rt', encoding='utf-8') as f:
                 # Try to read first line
-                f.readline()
+                line = f.readline()
+                json.loads(line.strip())
             return True
         except Exception as e:
-            self.logger.error(f"File {filepath} is not a valid gzip file: {str(e)}")
+            self.logger.error(f"File {filepath} is not a valid gzipped JSON file: {str(e)}")
             return False
     
     def download_file(self, url: str, filename: str) -> str:
@@ -88,7 +88,7 @@ class DataDownloader:
             
             # Verify the downloaded file
             if not self.verify_gzip_file(filepath):
-                raise ValueError(f"Downloaded file {filename} is not a valid gzip file")
+                raise ValueError(f"Downloaded file {filename} is not a valid gzipped JSON file")
             
             self.logger.info(f"Successfully downloaded and verified {filename}")
             return str(filepath)
@@ -109,13 +109,6 @@ class DataDownloader:
         downloaded_files = {}
         
         try:
-            # Download books metadata
-            books_path = self.download_file(
-                self.urls['books'],
-                'meta_Books.json.gz'
-            )
-            downloaded_files['books'] = books_path
-            
             # Download reviews
             reviews_path = self.download_file(
                 self.urls['reviews'],

@@ -8,10 +8,9 @@ import json
 import logging
 from tqdm import tqdm
 from datetime import datetime
-import gzip
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
 from transformers import AutoTokenizer, AutoModel
+import gzip
 
 class ModelTrainer:
     def __init__(self, model_dir: str = "models/checkpoints"):
@@ -30,47 +29,46 @@ class ModelTrainer:
         self.tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
         self.model = AutoModel.from_pretrained('bert-base-uncased').to(self.device)
         
-    def load_books_data(self, file_path: str, max_items: int = 1000) -> pd.DataFrame:
+    def load_reviews_data(self, file_path: str, max_items: int = 1000) -> pd.DataFrame:
         """
-        Load and process books data from the meta_Books.jsonl.gz file.
+        Load and process reviews data from the gzipped JSON file.
         
         Args:
-            file_path (str): Path to the meta_Books.jsonl.gz file
+            file_path (str): Path to the reviews JSON file
             max_items (int): Maximum number of items to load
             
         Returns:
-            pd.DataFrame: Processed books data
+            pd.DataFrame: Processed reviews data
         """
         self.logger.info(f"Loading data from {file_path}")
         data = []
         
         with gzip.open(file_path, 'rt', encoding='utf-8') as f:
-            for i, line in enumerate(tqdm(f, desc="Loading books")):
+            for i, line in enumerate(tqdm(f, desc="Loading reviews")):
                 if i >= max_items:
                     break
                     
                 try:
-                    item = json.loads(line.strip())
+                    review = json.loads(line.strip())
                     # Extract relevant fields for analysis
-                    processed_item = {
-                        'asin': item.get('parent_asin', ''),
-                        'title': item.get('title', ''),
-                        'description': ' '.join(item.get('description', [])),
-                        'categories': item.get('categories', []),
-                        'price': float(item.get('price', 0.0)),
-                        'average_rating': float(item.get('average_rating', 0.0)),
-                        'rating_count': int(item.get('rating_number', 0)),
-                        'main_category': item.get('main_category', ''),
-                        'features': item.get('features', []),
-                        'author': item.get('author', {}).get('name', '') if item.get('author') else ''
+                    processed_review = {
+                        'asin': review.get('asin', ''),
+                        'parent_asin': review.get('parent_asin', ''),
+                        'user_id': review.get('user_id', ''),
+                        'rating': float(review.get('rating', 0.0)),
+                        'title': review.get('title', ''),
+                        'text': review.get('text', ''),
+                        'helpful_votes': int(review.get('helpful_votes', 0)),
+                        'verified_purchase': bool(review.get('verified_purchase', False)),
+                        'sort_timestamp': int(review.get('sort_timestamp', 0))
                     }
-                    data.append(processed_item)
+                    data.append(processed_review)
                 except Exception as e:
-                    self.logger.warning(f"Error processing item at line {i}: {e}")
+                    self.logger.warning(f"Error processing review at line {i}: {e}")
                     continue
         
         df = pd.DataFrame(data)
-        self.logger.info(f"Loaded {len(df)} items")
+        self.logger.info(f"Loaded {len(df)} reviews")
         return df
     
     def prepare_data(self, df: pd.DataFrame) -> tuple:
@@ -84,10 +82,10 @@ class ModelTrainer:
             tuple: (X, y) where X is the input features and y is the target
         """
         # Combine text features
-        df['text'] = df.apply(lambda x: f"Title: {x['title']} Description: {x['description']} Features: {' '.join(x['features'])}", axis=1)
+        df['text'] = df.apply(lambda x: f"Title: {x['title']} Review: {x['text']}", axis=1)
         
-        # Create target variable (example: predict if book is highly rated)
-        df['is_highly_rated'] = (df['average_rating'] >= 4.0).astype(int)
+        # Create target variable (example: predict if review is helpful)
+        df['is_helpful'] = (df['helpful_votes'] > 0).astype(int)
         
         # Tokenize text
         encodings = self.tokenizer(
@@ -101,7 +99,7 @@ class ModelTrainer:
         # Move to device
         input_ids = encodings['input_ids'].to(self.device)
         attention_mask = encodings['attention_mask'].to(self.device)
-        labels = torch.tensor(df['is_highly_rated'].values, dtype=torch.long).to(self.device)
+        labels = torch.tensor(df['is_helpful'].values, dtype=torch.long).to(self.device)
         
         return (input_ids, attention_mask), labels
     
@@ -293,10 +291,10 @@ def main():
     trainer = ModelTrainer()
     
     # Load and prepare data
-    books_df = trainer.load_books_data("data/raw/meta_Books.jsonl.gz", max_items=1000)
+    reviews_df = trainer.load_reviews_data("data/raw/reviews_Books.json.gz", max_items=1000)
     
     # Prepare data for training
-    X, y = trainer.prepare_data(books_df)
+    X, y = trainer.prepare_data(reviews_df)
     
     # Split data into train and validation sets
     train_size = int(0.8 * len(X[0]))
