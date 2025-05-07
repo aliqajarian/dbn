@@ -60,18 +60,56 @@ class ModelTrainer:
             # Read CSV file
             df = pd.read_csv(file_path, nrows=max_items)
             
-            # Process the data
-            processed_df = pd.DataFrame({
-                'asin': df['asin'],
-                'parent_asin': df['parent_asin'],
-                'user_id': df['user_id'],
-                'rating': df['rating'].astype(float),
-                'title': df['title'].fillna(''),
-                'text': df['text'].fillna(''),
-                'helpful_votes': df['helpful_votes'].fillna(0).astype(int),
-                'verified_purchase': df['verified_purchase'].fillna(False).astype(bool),
-                'sort_timestamp': df['sort_timestamp'].fillna(0).astype(int)
-            })
+            # Print column names for debugging
+            self.logger.info(f"CSV columns: {df.columns.tolist()}")
+            
+            # Map column names to expected format
+            column_mapping = {
+                'Id': 'asin',
+                'ProductId': 'parent_asin',
+                'UserId': 'user_id',
+                'Score': 'rating',
+                'Summary': 'title',
+                'Text': 'text',
+                'HelpfulnessNumerator': 'helpful_votes',
+                'Time': 'sort_timestamp'
+            }
+            
+            # Rename columns if they exist
+            for old_col, new_col in column_mapping.items():
+                if old_col in df.columns:
+                    df = df.rename(columns={old_col: new_col})
+            
+            # Process the data with available columns
+            processed_data = {}
+            
+            # Handle required columns
+            for col in ['asin', 'parent_asin', 'user_id', 'rating', 'title', 'text', 'helpful_votes', 'sort_timestamp']:
+                if col in df.columns:
+                    if col == 'rating':
+                        processed_data[col] = df[col].astype(float)
+                    elif col == 'helpful_votes':
+                        processed_data[col] = df[col].fillna(0).astype(int)
+                    elif col == 'sort_timestamp':
+                        processed_data[col] = df[col].fillna(0).astype(int)
+                    else:
+                        processed_data[col] = df[col].fillna('')
+                else:
+                    self.logger.warning(f"Column {col} not found in CSV file")
+                    # Add default values for missing columns
+                    if col == 'rating':
+                        processed_data[col] = pd.Series(0.0, index=df.index)
+                    elif col == 'helpful_votes':
+                        processed_data[col] = pd.Series(0, index=df.index)
+                    elif col == 'sort_timestamp':
+                        processed_data[col] = pd.Series(0, index=df.index)
+                    else:
+                        processed_data[col] = pd.Series('', index=df.index)
+            
+            # Add verified_purchase column (not in the dataset, so default to False)
+            processed_data['verified_purchase'] = pd.Series(False, index=df.index)
+            
+            processed_df = pd.DataFrame(processed_data)
             
             self.logger.info(f"Loaded {len(processed_df)} reviews")
             return processed_df
