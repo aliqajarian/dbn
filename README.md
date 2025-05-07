@@ -136,7 +136,7 @@ drive.mount('/content/drive')
 !python -m spacy download en_core_web_sm
 
 # Clone repository
-!git clone https://github.com/yourusername/dbn.git
+!git clone https://github.com/aliqajarian/dbn.git
 %cd dbn
 
 # Enable GPU
