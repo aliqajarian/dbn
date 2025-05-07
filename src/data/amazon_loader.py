@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Dict, Optional
 import logging
 from tqdm import tqdm
+import os
 
 class AmazonBooksLoader:
     def __init__(self, data_path: str):
@@ -67,51 +68,48 @@ class AmazonBooksLoader:
         self.logger.info(f"Loaded {len(df)} items")
         return df
     
-    def get_reviews(self, reviews_path: str, max_reviews: Optional[int] = None) -> pd.DataFrame:
+    def get_reviews(self, reviews_file: str, max_reviews: int = None) -> pd.DataFrame:
         """
-        Load reviews for the books.
+        Load reviews from the reviews file.
         
         Args:
-            reviews_path (str): Path to the reviews file
-            max_reviews (Optional[int]): Maximum number of reviews to load
+            reviews_file (str): Path to the reviews file
+            max_reviews (int, optional): Maximum number of reviews to load
             
         Returns:
             pd.DataFrame: DataFrame containing the reviews
         """
-        reviews_path = Path(reviews_path)
-        if not reviews_path.exists():
-            raise FileNotFoundError(f"Reviews file not found at {reviews_path}")
-        
-        self.logger.info(f"Loading reviews from {reviews_path}")
-        
+        if not os.path.exists(reviews_file):
+            raise FileNotFoundError(f"Reviews file not found: {reviews_file}")
+            
         reviews = []
-        with gzip.open(reviews_path, 'rt', encoding='utf-8') as f:
-            for i, line in enumerate(tqdm(f, desc="Loading reviews")):
-                if max_reviews and i >= max_reviews:
-                    break
-                    
-                try:
-                    review = json.loads(line.strip())
-                    processed_review = {
-                        'asin': review.get('asin', ''),
-                        'reviewerID': review.get('reviewerID', ''),
-                        'reviewerName': review.get('reviewerName', ''),
-                        'reviewText': review.get('reviewText', ''),
-                        'summary': review.get('summary', ''),
-                        'overall': review.get('overall', 0.0),
-                        'verified': review.get('verified', False),
-                        'reviewTime': review.get('reviewTime', ''),
-                        'unixReviewTime': review.get('unixReviewTime', 0)
-                    }
-                    reviews.append(processed_review)
-                except json.JSONDecodeError as e:
-                    self.logger.warning(f"Error decoding JSON at line {i}: {e}")
-                except Exception as e:
-                    self.logger.warning(f"Error processing review at line {i}: {e}")
-        
-        df = pd.DataFrame(reviews)
-        self.logger.info(f"Loaded {len(df)} reviews")
-        return df
+        try:
+            with gzip.open(reviews_file, 'rt', encoding='utf-8') as f:
+                for i, line in enumerate(tqdm(f, desc="Loading reviews")):
+                    if max_reviews and i >= max_reviews:
+                        break
+                    try:
+                        review = json.loads(line)
+                        reviews.append({
+                            'asin': review.get('asin'),
+                            'reviewerID': review.get('reviewerID'),
+                            'reviewerName': review.get('reviewerName'),
+                            'reviewText': review.get('reviewText'),
+                            'overall': review.get('overall'),
+                            'summary': review.get('summary'),
+                            'unixReviewTime': review.get('unixReviewTime'),
+                            'reviewTime': review.get('reviewTime'),
+                            'helpful': review.get('helpful', [0, 0])
+                        })
+                    except json.JSONDecodeError:
+                        self.logger.warning(f"Failed to parse review at line {i}")
+                        continue
+        except Exception as e:
+            self.logger.error(f"Error reading reviews file: {str(e)}")
+            raise
+            
+        self.logger.info(f"Loaded {len(reviews)} reviews")
+        return pd.DataFrame(reviews)
     
     def merge_books_and_reviews(self, books_df: pd.DataFrame, reviews_df: pd.DataFrame) -> pd.DataFrame:
         """

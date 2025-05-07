@@ -208,13 +208,18 @@ def main():
     # Initialize trainer
     trainer = ModelTrainer()
     
+    # First ensure data is downloaded
+    from ..data.download_data import DataDownloader
+    downloader = DataDownloader()
+    downloaded_files = downloader.download_all()
+    
     # Load and prepare data
     from ..data.amazon_loader import AmazonBooksLoader
-    loader = AmazonBooksLoader("data/raw/meta_Books.jsonl.gz")
+    loader = AmazonBooksLoader(downloaded_files['books'])
     
     # Load and split data
     books_df = loader.load_data(max_items=1000)
-    reviews_df = loader.get_reviews("data/raw/reviews_Books.jsonl.gz", max_reviews=10000)
+    reviews_df = loader.get_reviews(downloaded_files['reviews'], max_reviews=10000)
     merged_df = loader.merge_books_and_reviews(books_df, reviews_df)
     analysis_df = loader.prepare_for_analysis(merged_df)
     
