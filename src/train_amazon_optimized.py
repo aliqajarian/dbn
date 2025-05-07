@@ -96,8 +96,6 @@ class AmazonBooksLoader:
         """Load and process the Amazon Books dataset with improved error handling."""
         if file_path is None:
             file_path = str(self.data_dir / "meta_Books.jsonl.gz")
-        else:
-            file_path = str(file_path)
         
         if not Path(file_path).exists():
             file_path = self.download_data()
