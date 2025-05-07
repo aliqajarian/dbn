@@ -98,7 +98,11 @@ class AmazonBooksLoader:
             file_path = str(self.data_dir / "meta_Books.jsonl.gz")
         
         if not Path(file_path).exists():
-            file_path = self.download_data()
+            downloaded_path = self.download_data()
+            if downloaded_path is None:
+                logger.error("Failed to download data")
+                return None
+            file_path = downloaded_path
         
         logger.info("Loading and processing data...")
         data = []
