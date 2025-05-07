@@ -131,7 +131,7 @@ scaler = GradScaler()
 !python -m spacy download en_core_web_sm
 
 # Clone repository
-!git clone https://github.com/yourusername/anomaly-detection.git
+!git clone https://github.com/aliqajarian/anomaly-detection.git
 %cd anomaly-detection
 
 # Enable GPU
