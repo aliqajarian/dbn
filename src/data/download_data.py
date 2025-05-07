@@ -5,6 +5,7 @@ from pathlib import Path
 import logging
 from tqdm import tqdm
 import os
+import json
 
 class DataDownloader:
     def __init__(self, data_dir: str = "data/raw"):
@@ -24,6 +25,25 @@ class DataDownloader:
             'reviews': 'https://datarepo.eng.ucsd.edu/mcauley_group/data/amazon_v2/categoryFilesSmall/Books_5.json.gz'
         }
     
+    def verify_gzip_file(self, filepath: Path) -> bool:
+        """
+        Verify that a file is a valid gzip file.
+        
+        Args:
+            filepath (Path): Path to the file to verify
+            
+        Returns:
+            bool: True if file is valid gzip, False otherwise
+        """
+        try:
+            with gzip.open(filepath, 'rt', encoding='utf-8') as f:
+                # Try to read first line
+                f.readline()
+            return True
+        except Exception as e:
+            self.logger.error(f"File {filepath} is not a valid gzip file: {str(e)}")
+            return False
+    
     def download_file(self, url: str, filename: str) -> str:
         """
         Download a file from URL with progress bar.
@@ -37,10 +57,14 @@ class DataDownloader:
         """
         filepath = self.data_dir / filename
         
-        # Skip if file already exists
+        # Check if file exists and is valid
         if filepath.exists():
-            self.logger.info(f"File already exists: {filepath}")
-            return str(filepath)
+            if self.verify_gzip_file(filepath):
+                self.logger.info(f"Valid file already exists: {filepath}")
+                return str(filepath)
+            else:
+                self.logger.warning(f"Existing file is invalid, removing: {filepath}")
+                filepath.unlink()
         
         try:
             # Stream the download with progress bar
@@ -62,7 +86,11 @@ class DataDownloader:
                     size = f.write(data)
                     pbar.update(size)
             
-            self.logger.info(f"Successfully downloaded {filename}")
+            # Verify the downloaded file
+            if not self.verify_gzip_file(filepath):
+                raise ValueError(f"Downloaded file {filename} is not a valid gzip file")
+            
+            self.logger.info(f"Successfully downloaded and verified {filename}")
             return str(filepath)
             
         except requests.exceptions.RequestException as e:
