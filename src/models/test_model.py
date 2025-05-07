@@ -7,7 +7,7 @@ import json
 import logging
 from tqdm import tqdm
 from datetime import datetime
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, precision_score, recall_score, f1_score, roc_curve, auc
 import seaborn as sns
 import matplotlib.pyplot as plt
 from transformers import AutoTokenizer, AutoModel
@@ -234,7 +234,7 @@ class ModelTester:
     
     def evaluate(self, test_data: tuple) -> dict:
         """
-        Evaluate model on test data.
+        Evaluate the model on test data.
         
         Args:
             test_data (tuple): (X_test, y_test, texts_test)
@@ -245,15 +245,17 @@ class ModelTester:
         X_test, y_test, texts = test_data
         self.model.eval()
         
+        # Get predictions and probabilities
         predictions = []
+        probabilities = []
         true_labels = []
         
         with torch.no_grad():
-            for i in tqdm(range(0, len(X_test[0]), 32), desc="Evaluating"):
+            for i in tqdm(range(0, len(X_test[0]), self.batch_size), desc="Evaluating"):
                 # Get batch
-                batch_input_ids = X_test[0][i:i + 32]
-                batch_attention_mask = X_test[1][i:i + 32]
-                batch_labels = y_test[i:i + 32]
+                batch_input_ids = X_test[0][i:i + self.batch_size]
+                batch_attention_mask = X_test[1][i:i + self.batch_size]
+                batch_labels = y_test[i:i + self.batch_size]
                 
                 # Forward pass
                 outputs = self.model(
@@ -261,81 +263,126 @@ class ModelTester:
                     attention_mask=batch_attention_mask
                 )
                 logits = outputs.last_hidden_state[:, 0, :]
-                _, predicted = torch.max(logits.data, 1)
                 
-                predictions.extend(predicted.cpu().numpy())
+                # Get predictions and probabilities
+                probs = torch.softmax(logits, dim=1)
+                _, preds = torch.max(logits.data, 1)
+                
+                predictions.extend(preds.cpu().numpy())
+                probabilities.extend(probs.cpu().numpy())
                 true_labels.extend(batch_labels.cpu().numpy())
+        
+        # Convert to numpy arrays
+        predictions = np.array(predictions)
+        probabilities = np.array(probabilities)
+        true_labels = np.array(true_labels)
         
         # Calculate metrics
         results = {
+            'accuracy': accuracy_score(true_labels, predictions),
+            'precision': precision_score(true_labels, predictions, average='weighted'),
+            'recall': recall_score(true_labels, predictions, average='weighted'),
+            'f1': f1_score(true_labels, predictions, average='weighted'),
+            'confusion_matrix': confusion_matrix(true_labels, predictions).tolist(),
             'classification_report': classification_report(true_labels, predictions, output_dict=True),
-            'confusion_matrix': confusion_matrix(true_labels, predictions).tolist()
+            'labels': true_labels.tolist(),
+            'predictions': predictions.tolist(),
+            'probabilities': probabilities.tolist()
         }
         
         # Create visualizations
-        self._create_visualizations(true_labels, predictions, results['confusion_matrix'])
+        self._create_visualizations(true_labels, predictions, probabilities, results['confusion_matrix'])
         
         return results
     
-    def _create_visualizations(self, labels, predictions, conf_matrix):
-        """Create various visualizations of the results."""
-        # 1. Confusion Matrix
-        plt.figure(figsize=(8, 6))
-        sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues')
-        plt.title('Confusion Matrix')
-        plt.ylabel('True Label')
-        plt.xlabel('Predicted Label')
-        plt.savefig(self.model_dir / "confusion_matrix.png")
-        plt.close()
+    def _create_visualizations(self, labels: list, predictions: list, probabilities: list, confusion_mat: list):
+        """
+        Create visualizations for evaluation results.
         
-        # 2. ROC Curve
-        from sklearn.metrics import roc_curve, auc
-        fpr, tpr, _ = roc_curve(labels, [p[1] for p in probabilities])
-        roc_auc = auc(fpr, tpr)
-        
-        plt.figure(figsize=(8, 6))
-        plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (AUC = {roc_auc:.2f})')
-        plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
-        plt.xlim([0.0, 1.0])
-        plt.ylim([0.0, 1.05])
-        plt.xlabel('False Positive Rate')
-        plt.ylabel('True Positive Rate')
-        plt.title('Receiver Operating Characteristic (ROC) Curve')
-        plt.legend(loc="lower right")
-        plt.savefig(self.model_dir / "roc_curve.png")
-        plt.close()
-        
-        # 3. Interactive Plotly Dashboard
-        fig = make_subplots(
-            rows=2, cols=2,
-            subplot_titles=('Confusion Matrix', 'ROC Curve', 'Prediction Distribution', 'Feature Importance')
-        )
-        
-        # Confusion Matrix
-        fig.add_trace(
-            go.Heatmap(z=conf_matrix, colorscale='Blues', showscale=False),
-            row=1, col=1
-        )
-        
-        # ROC Curve
-        fig.add_trace(
-            go.Scatter(x=fpr, y=tpr, name=f'ROC (AUC = {roc_auc:.2f})'),
-            row=1, col=2
-        )
-        
-        # Prediction Distribution
-        fig.add_trace(
-            go.Histogram(x=predictions, name='Predictions'),
-            row=2, col=1
-        )
-        
-        # Save interactive plot
-        fig.write_html(str(self.model_dir / "interactive_results.html"))
-        
-        if self.use_gdrive:
-            self.save_to_gdrive('visualizations/confusion_matrix.png', self.model_dir / "confusion_matrix.png")
-            self.save_to_gdrive('visualizations/roc_curve.png', self.model_dir / "roc_curve.png")
-            self.save_to_gdrive('visualizations/interactive_results.html', self.model_dir / "interactive_results.html")
+        Args:
+            labels (list): True labels
+            predictions (list): Model predictions
+            probabilities (list): Prediction probabilities
+            confusion_mat (list): Confusion matrix
+        """
+        try:
+            # Create output directory
+            output_dir = self.model_dir / "evaluation"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 1. Confusion Matrix
+            plt.figure(figsize=(8, 6))
+            sns.heatmap(confusion_mat, annot=True, fmt='d', cmap='Blues')
+            plt.title('Confusion Matrix')
+            plt.ylabel('True Label')
+            plt.xlabel('Predicted Label')
+            plt.savefig(output_dir / "confusion_matrix.png")
+            plt.close()
+            
+            # 2. ROC Curve
+            fpr, tpr, _ = roc_curve(labels, [p[1] for p in probabilities])
+            roc_auc = auc(fpr, tpr)
+            
+            plt.figure(figsize=(8, 6))
+            plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (AUC = {roc_auc:.2f})')
+            plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+            plt.xlim([0.0, 1.0])
+            plt.ylim([0.0, 1.05])
+            plt.xlabel('False Positive Rate')
+            plt.ylabel('True Positive Rate')
+            plt.title('Receiver Operating Characteristic (ROC) Curve')
+            plt.legend(loc="lower right")
+            plt.savefig(output_dir / "roc_curve.png")
+            plt.close()
+            
+            # 3. Interactive Dashboard
+            fig = make_subplots(
+                rows=2, cols=2,
+                subplot_titles=('Confusion Matrix', 'ROC Curve', 'Prediction Distribution', 'Feature Importance')
+            )
+            
+            # Confusion Matrix
+            fig.add_trace(
+                go.Heatmap(z=confusion_mat, colorscale='Blues', showscale=False),
+                row=1, col=1
+            )
+            
+            # ROC Curve
+            fig.add_trace(
+                go.Scatter(x=fpr, y=tpr, name=f'ROC (AUC = {roc_auc:.2f})'),
+                row=1, col=2
+            )
+            
+            # Prediction Distribution
+            fig.add_trace(
+                go.Histogram(x=predictions, name='Predictions'),
+                row=2, col=1
+            )
+            
+            # Save interactive plot
+            fig.write_html(str(output_dir / "evaluation_dashboard.html"))
+            
+            # Save to Google Drive if enabled
+            if self.use_gdrive:
+                try:
+                    gdrive_viz_dir = self.gdrive_dir / "visualizations" / "evaluation"
+                    gdrive_viz_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    # Copy visualization files
+                    for file in ['confusion_matrix.png', 'roc_curve.png', 'evaluation_dashboard.html']:
+                        src_path = output_dir / file
+                        dst_path = gdrive_viz_dir / file
+                        if src_path.exists():
+                            import shutil
+                            shutil.copy2(src_path, dst_path)
+                except Exception as e:
+                    self.logger.warning(f"Failed to save evaluation visualizations to Google Drive: {str(e)}")
+            
+            self.logger.info(f"Saved evaluation visualizations to {output_dir}")
+            
+        except Exception as e:
+            self.logger.error(f"Error creating evaluation visualizations: {str(e)}")
+            raise
     
     def compare_with_baselines(self, test_data: tuple) -> dict:
         """

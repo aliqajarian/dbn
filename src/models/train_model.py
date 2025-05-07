@@ -28,6 +28,7 @@ class ModelTrainer:
         self.logger = logging.getLogger(__name__)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.use_gdrive = use_gdrive
+        self.batch_size = 32  # Add batch size initialization
         
         if use_gdrive:
             self._setup_gdrive()
@@ -82,7 +83,7 @@ class ModelTrainer:
         except Exception as e:
             self.logger.warning(f"Failed to save to Google Drive: {str(e)}")
     
-    def load_reviews_data(self, file_path: str, max_items: int = 1000) -> pd.DataFrame:
+    def load_reviews_data(self, file_path: str, max_items: int = 20000) -> pd.DataFrame:
         """
         Load and process reviews data from the CSV file.
         
@@ -175,27 +176,32 @@ class ModelTrainer:
         Returns:
             tuple: (X, y, texts) where X is the input features, y is the target, and texts is the raw text
         """
-        # Combine text features
-        df['text'] = df.apply(lambda x: f"Title: {x['title']} Review: {x['text']}", axis=1)
-        
-        # Create target variable (example: predict if review is helpful)
-        df['is_helpful'] = (df['helpful_votes'] > 0).astype(int)
-        
-        # Tokenize text
-        encodings = self.tokenizer(
-            df['text'].tolist(),
-            truncation=True,
-            padding=True,
-            max_length=512,
-            return_tensors='pt'
-        )
-        
-        # Move to device
-        input_ids = encodings['input_ids'].to(self.device)
-        attention_mask = encodings['attention_mask'].to(self.device)
-        labels = torch.tensor(df['is_helpful'].values, dtype=torch.long).to(self.device)
-        
-        return (input_ids, attention_mask), labels, df['text'].tolist()
+        try:
+            # Combine text features
+            df['text'] = df.apply(lambda x: f"Title: {x['title']} Review: {x['text']}", axis=1)
+            
+            # Create target variable (example: predict if review is helpful)
+            df['is_helpful'] = (df['helpful_votes'] > 0).astype(int)
+            
+            # Tokenize text
+            encodings = self.tokenizer(
+                df['text'].tolist(),
+                truncation=True,
+                padding=True,
+                max_length=512,
+                return_tensors='pt'
+            )
+            
+            # Move to device
+            input_ids = encodings['input_ids'].to(self.device)
+            attention_mask = encodings['attention_mask'].to(self.device)
+            labels = torch.tensor(df['is_helpful'].values, dtype=torch.long).to(self.device)
+            
+            return (input_ids, attention_mask), labels, df['text'].tolist()
+            
+        except Exception as e:
+            self.logger.error(f"Error preparing data: {str(e)}")
+            raise
     
     def train(self, train_data: tuple, val_data: tuple = None, epochs: int = 3, batch_size: int = 32):
         """
@@ -209,6 +215,7 @@ class ModelTrainer:
         """
         X_train, y_train, texts = train_data
         self.model.train()
+        self.batch_size = batch_size  # Update batch size
         
         # Create timestamp for this training run
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -230,11 +237,11 @@ class ModelTrainer:
             total = 0
             
             # Training loop
-            for i in tqdm(range(0, len(X_train[0]), batch_size), desc="Training"):
+            for i in tqdm(range(0, len(X_train[0]), self.batch_size), desc="Training"):
                 # Get batch
-                batch_input_ids = X_train[0][i:i + batch_size]
-                batch_attention_mask = X_train[1][i:i + batch_size]
-                batch_labels = y_train[i:i + batch_size]
+                batch_input_ids = X_train[0][i:i + self.batch_size]
+                batch_attention_mask = X_train[1][i:i + self.batch_size]
+                batch_labels = y_train[i:i + self.batch_size]
                 
                 # Forward pass
                 self.optimizer.zero_grad()
@@ -256,7 +263,7 @@ class ModelTrainer:
                 total_loss += loss.item()
             
             # Calculate epoch metrics
-            epoch_loss = total_loss / (len(X_train[0]) / batch_size)
+            epoch_loss = total_loss / (len(X_train[0]) / self.batch_size)
             epoch_acc = correct / total
             
             history['train_loss'].append(epoch_loss)
@@ -266,7 +273,7 @@ class ModelTrainer:
             
             # Validation
             if val_data is not None:
-                val_loss, val_acc = self._validate(val_data, batch_size)
+                val_loss, val_acc = self._validate(val_data)
                 history['val_loss'].append(val_loss)
                 history['val_acc'].append(val_acc)
                 self.logger.info(f"Validation - Loss: {val_loss:.4f}, Accuracy: {val_acc:.4f}")
@@ -317,13 +324,12 @@ class ModelTrainer:
             except Exception as e:
                 self.logger.warning(f"Failed to save training history to Google Drive: {str(e)}")
     
-    def _validate(self, val_data: tuple, batch_size: int) -> tuple:
+    def _validate(self, val_data: tuple) -> tuple:
         """
         Validate the model.
         
         Args:
             val_data (tuple): (X_val, y_val, texts_val)
-            batch_size (int): Batch size for validation
             
         Returns:
             tuple: (val_loss, val_acc)
@@ -336,11 +342,11 @@ class ModelTrainer:
         total = 0
         
         with torch.no_grad():
-            for i in range(0, len(X_val[0]), batch_size):
+            for i in range(0, len(X_val[0]), self.batch_size):
                 # Get batch
-                batch_input_ids = X_val[0][i:i + batch_size]
-                batch_attention_mask = X_val[1][i:i + batch_size]
-                batch_labels = y_val[i:i + batch_size]
+                batch_input_ids = X_val[0][i:i + self.batch_size]
+                batch_attention_mask = X_val[1][i:i + self.batch_size]
+                batch_labels = y_val[i:i + self.batch_size]
                 
                 # Forward pass
                 outputs = self.model(
@@ -356,7 +362,7 @@ class ModelTrainer:
                 correct += (predicted == batch_labels).sum().item()
                 total_loss += loss.item()
         
-        val_loss = total_loss / (len(X_val[0]) / batch_size)
+        val_loss = total_loss / (len(X_val[0]) / self.batch_size)
         val_acc = correct / total
         
         return val_loss, val_acc
@@ -371,11 +377,40 @@ def main():
     
     try:
         # Load and prepare data
-        train_df = trainer.load_reviews_data("data/raw/Books_5.csv", max_items=1000)
+        train_df = trainer.load_reviews_data("data/raw/Books_rating.csv", max_items=20000)
+        
+        # Split data into train and test sets
+        from sklearn.model_selection import train_test_split
+        train_df, test_df = train_test_split(train_df, test_size=1000, random_state=42)
+        
+        # Prepare training data
         train_data = trainer.prepare_data(train_df)
         
+        # Prepare test data
+        test_data = trainer.prepare_data(test_df)
+        
         # Train model
-        trainer.train(train_data, epochs=3, batch_size=32)
+        trainer.train(train_data, val_data=test_data, epochs=3, batch_size=32)
+        
+        # Save test data for later evaluation
+        test_data_path = trainer.model_dir / "test_data.json"
+        test_data_dict = {
+            'input_ids': test_data[0][0].cpu().numpy().tolist(),
+            'attention_mask': test_data[0][1].cpu().numpy().tolist(),
+            'labels': test_data[1].cpu().numpy().tolist(),
+            'texts': test_data[2]
+        }
+        with open(test_data_path, 'w') as f:
+            json.dump(test_data_dict, f)
+        
+        if trainer.use_gdrive:
+            try:
+                gdrive_test_path = trainer.gdrive_dir / "test_data.json"
+                gdrive_test_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(gdrive_test_path, 'w') as f:
+                    json.dump(test_data_dict, f)
+            except Exception as e:
+                trainer.logger.warning(f"Failed to save test data to Google Drive: {str(e)}")
         
     except Exception as e:
         logging.error(f"Error in main: {str(e)}")
